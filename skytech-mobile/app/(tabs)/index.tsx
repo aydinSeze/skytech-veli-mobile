@@ -8,6 +8,8 @@ import {
   RefreshControl,
   Dimensions,
   Animated,
+  Image,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,6 +39,7 @@ export default function HomeScreen() {
   const [pulseAnim] = useState(new Animated.Value(1));
   const [promoPulseAnim] = useState(new Animated.Value(1));
   const [eventNotificationCount, setEventNotificationCount] = useState<number>(0);
+  const [activeAnnouncement, setActiveAnnouncement] = useState<any>(null);
   const router = useRouter();
 
   const fetchBalance = async () => {
@@ -120,15 +123,63 @@ export default function HomeScreen() {
     loadEventNotifications();
   }, []);
 
+  // Aktif kampanyayı çek (EN SON AKTİF OLAN)
+  useEffect(() => {
+    const fetchActiveAnnouncement = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('announcements')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Kampanya çekme hatası:', error);
+          setActiveAnnouncement(null);
+          return;
+        }
+
+        setActiveAnnouncement(data || null);
+      } catch (error) {
+        console.error('Kampanya yükleme hatası:', error);
+        setActiveAnnouncement(null);
+      }
+    };
+
+    fetchActiveAnnouncement();
+
+    // Real-time subscription for announcements
+    const announcementChannel = supabase
+      .channel('announcements-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'announcements',
+        },
+        () => {
+          fetchActiveAnnouncement();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(announcementChannel);
+    };
+  }, []);
+
   useEffect(() => {
     if (!student?.id) return;
 
     fetchBalance();
     fetchRecentTransactions();
 
-    // Yarışma kartı animasyonu - Etkinlik varsa yanıp sönsün
+    // Yarışma kartı animasyonu - Aktif kampanya varsa yanıp sönsün
     let promoAnimation: Animated.CompositeAnimation | null = null;
-    if (eventNotificationCount > 0) {
+    if (activeAnnouncement) {
       promoAnimation = Animated.loop(
         Animated.sequence([
           Animated.timing(promoPulseAnim, {
@@ -197,7 +248,7 @@ export default function HomeScreen() {
       supabase.removeChannel(balanceChannel);
       supabase.removeChannel(ordersChannel);
     };
-  }, [student?.id, eventNotificationCount]);
+  }, [student?.id, activeAnnouncement]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -284,30 +335,56 @@ export default function HomeScreen() {
               <Text style={styles.quickActionTitle}>Kantin Menüsü</Text>
             </TouchableOpacity>
 
-            {/* SkyTech Ödüllü Etkinliklerimiz - Reklam Kartı (Animasyonlu) */}
-            <Animated.View style={[styles.promoCardWrapper, { opacity: eventNotificationCount > 0 ? promoPulseAnim : 1 }]}>
+            {/* SkyTech Ödüllü Etkinliklerimiz - Dinamik Kampanya Kartı */}
+            <Animated.View style={[styles.promoCardWrapper, { opacity: activeAnnouncement ? promoPulseAnim : 1 }]}>
               <TouchableOpacity
-                style={[styles.quickActionCard, styles.promoCard]}
-                onPress={() => {
-                  // Profil sayfasına git ve bildirimler modalını aç
-                  router.push('/(tabs)/profile');
-                  // Profil sayfasında bildirimler modalını açmak için bir state veya parametre kullanabiliriz
-                  // Şimdilik sadece profil sayfasına yönlendiriyoruz
+                style={[
+                  styles.quickActionCard,
+                  activeAnnouncement ? styles.promoCardActive : styles.promoCard,
+                  activeAnnouncement && styles.promoCardWithImage
+                ]}
+                onPress={async () => {
+                  if (activeAnnouncement?.target_link) {
+                    try {
+                      const url = activeAnnouncement.target_link;
+                      const canOpen = await Linking.canOpenURL(url);
+                      if (canOpen) {
+                        await Linking.openURL(url);
+                      } else {
+                        console.error('URL açılamıyor:', url);
+                      }
+                    } catch (error) {
+                      console.error('Link açma hatası:', error);
+                    }
+                  } else {
+                    // Profil sayfasına git ve bildirimler modalını aç
+                    router.push('/(tabs)/profile');
+                  }
                 }}
               >
-                <View style={[styles.iconContainer, { backgroundColor: '#fbbf2420' }]}>
-                  <Trophy size={28} color="#fbbf24" />
-                  {eventNotificationCount > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{eventNotificationCount}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={styles.quickActionTitle}>SkyTech Ödüllü Etkinliklerimiz</Text>
-                {eventNotificationCount > 0 ? (
-                  <Text style={styles.promoText}>{eventNotificationCount} Yeni Etkinlik!</Text>
+                {activeAnnouncement?.image_url ? (
+                  <Image
+                    source={{ uri: activeAnnouncement.image_url }}
+                    style={styles.promoImageFull}
+                    resizeMode="cover"
+                  />
                 ) : (
-                  <Text style={styles.promoText}>Çok Yakında!</Text>
+                  <>
+                    <View style={[styles.iconContainer, { backgroundColor: '#fbbf2420' }]}>
+                      <Trophy size={28} color="#fbbf24" />
+                      {eventNotificationCount > 0 && (
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{eventNotificationCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.quickActionTitle}>SkyTech Ödüllü Etkinliklerimiz</Text>
+                    {eventNotificationCount > 0 ? (
+                      <Text style={styles.promoText}>{eventNotificationCount} Yeni Etkinlik!</Text>
+                    ) : (
+                      <Text style={styles.promoText}>Çok Yakında!</Text>
+                    )}
+                  </>
                 )}
               </TouchableOpacity>
             </Animated.View>
@@ -475,6 +552,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#fbbf2420',
     borderColor: '#fbbf24',
     borderWidth: 2,
+  },
+  promoCardActive: {
+    borderColor: '#fbbf24',
+    borderWidth: 2,
+    overflow: 'hidden',
+  },
+  promoCardWithImage: {
+    padding: 0,
+    minHeight: 140,
+    overflow: 'hidden',
+  },
+  promoImageFull: {
+    width: '100%',
+    height: '100%',
+    minHeight: 140,
   },
   promoText: {
     fontSize: 12,

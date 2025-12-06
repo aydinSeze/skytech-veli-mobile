@@ -272,6 +272,9 @@ export default function DashboardLayout({
                             <Link href="/dashboard/schools" className={getLinkClass('/dashboard/schools')}>
                                 <School size={20} /> <span>Okullar</span>
                             </Link>
+                            <Link href="/dashboard/campaigns" className={getLinkClass('/dashboard/campaigns')}>
+                                <Bell size={20} /> <span>Kampanyalar</span>
+                            </Link>
                             <Link href="/dashboard/settings" className={getLinkClass('/dashboard/settings')}>
                                 <Settings size={20} /> <span>Ayarlar</span>
                             </Link>
