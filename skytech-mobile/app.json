@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "skytech-mobile",
+    "slug": "skytech-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/logo.png",
+      "name": "SkyTech Campus",
+      "shortName": "SkyTech",
+      "lang": "tr",
+      "scope": "/",
+      "themeColor": "#0f172a",
+      "backgroundColor": "#0f172a",
+      "display": "standalone",
+      "orientation": "portrait",
+      "startUrl": "/",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "supabaseUrl": "https://oirqddnonygailwohviz.supabase.co",
+      "supabaseAnonKey": "sb_publishable_TV8fQO2oekdzhqNDVDYLMQ_ubN4S_Tj"
+    }
+  }
+}
