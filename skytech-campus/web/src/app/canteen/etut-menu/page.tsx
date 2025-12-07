@@ -1,13 +1,13 @@
 'use client'
 
 import { createClient } from '@/utils/supabase/client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { Calendar, Plus, Edit2, Trash2, X, Bell, Check } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-export default function EtutMenuPage() {
+function EtutMenuContent() {
     const supabase = createClient()
     const searchParams = useSearchParams()
     const [menus, setMenus] = useState<any[]>([])
@@ -275,6 +275,14 @@ export default function EtutMenuPage() {
                 </div>
             )}
         </div>
+    )
+}
+
+export default function EtutMenuPage() {
+    return (
+        <Suspense fallback={<div className="p-10 text-white text-center">Yükleniyor...</div>}>
+            <EtutMenuContent />
+        </Suspense>
     )
 }
 
