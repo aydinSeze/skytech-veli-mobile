@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { Upload, X, Edit2, Trash2, Check, Image as ImageIcon, Link as LinkIcon, AlertCircle } from 'lucide-react'
+import { Upload, X, Edit2, Trash2, Check, Image as ImageIcon, Link as LinkIcon, AlertCircle, Download, Users, Activity } from 'lucide-react'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 export default function CampaignsPage() {
     const supabase = createClient()
@@ -14,20 +16,36 @@ export default function CampaignsPage() {
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [previewImage, setPreviewImage] = useState<string | null>(null)
+    const [userStats, setUserStats] = useState<any>(null)
+    const [statsLoading, setStatsLoading] = useState(true)
+    const [activeTab, setActiveTab] = useState<'kampanyalar' | 'haberler'>('kampanyalar') // Sekme yönetimi
 
     const [form, setForm] = useState({
         title: '',
+        description: '',
         target_link: '',
         image_url: '',
-        is_active: false
+        is_active: false,
+        start_date: '',
+        end_date: '',
+        display_location: 'ana_sayfa' // 'ana_sayfa' veya 'haberler'
     })
 
-    // Verileri çek
+    // Verileri çek (Sekmeye göre filtrele)
     const fetchCampaigns = async () => {
         try {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('announcements')
                 .select('*')
+            
+            // Sekmeye göre filtrele - ÖNEMLİ: Kampanyalar ve Haberler ayrı
+            if (activeTab === 'kampanyalar') {
+                query = query.eq('display_location', 'ana_sayfa')
+            } else if (activeTab === 'haberler') {
+                query = query.eq('display_location', 'haberler')
+            }
+            
+            const { data, error } = await query
                 .order('created_at', { ascending: false })
 
             if (error) {
@@ -47,9 +65,66 @@ export default function CampaignsPage() {
         }
     }
 
+    // Kullanıcı istatistiklerini çek (Basit ve güvenilir yöntem)
+    const fetchUserStats = async () => {
+        try {
+            setStatsLoading(true)
+            
+            // Toplam öğrenci sayısı
+            const { count: totalStudents, error: studentsError } = await supabase
+                .from('students')
+                .select('*', { count: 'exact', head: true })
+
+            if (studentsError) {
+                console.error('Öğrenci sayısı hatası:', studentsError)
+            }
+
+            // Son 30 günde aktif kullanıcılar (app_usage tablosundan)
+            const thirtyDaysAgo = new Date()
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+            
+            const { data: appUsageData, error: usageError } = await supabase
+                .from('app_usage')
+                .select('student_id, created_at')
+                .eq('action', 'app_open')
+                .gte('created_at', thirtyDaysAgo.toISOString())
+
+            let activeCount = 0
+            if (!usageError && appUsageData) {
+                // Benzersiz aktif kullanıcı sayısı
+                const uniqueActiveUsers = new Set(appUsageData.map((u: any) => u.student_id))
+                activeCount = uniqueActiveUsers.size
+            } else if (usageError) {
+                // Tablo yoksa veya hata varsa, sadece logla
+                console.warn('app_usage tablosu bulunamadı veya hata:', usageError)
+            }
+
+            const total = totalStudents || 0
+            const inactiveCount = Math.max(0, total - activeCount)
+
+            setUserStats({
+                totalStudents: total,
+                activeUsers: activeCount,
+                inactiveUsers: inactiveCount,
+                activityData: []
+            })
+        } catch (error) {
+            console.error('İstatistik çekme hatası:', error)
+            setUserStats({
+                totalStudents: 0,
+                activeUsers: 0,
+                inactiveUsers: 0,
+                activityData: []
+            })
+        } finally {
+            setStatsLoading(false)
+        }
+    }
+
     useEffect(() => {
         fetchCampaigns()
-    }, [])
+        fetchUserStats()
+    }, [activeTab]) // activeTab değiştiğinde yeniden çek
 
     // Resim yükleme
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,8 +185,19 @@ export default function CampaignsPage() {
 
     // Kaydet
     const handleSave = async () => {
-        if (!form.title || !form.target_link || !form.image_url) {
-            setMessage({ type: 'error', text: 'Lütfen tüm alanları doldurun!' })
+        // Validasyon
+        if (!form.title || !form.title.trim()) {
+            setMessage({ type: 'error', text: 'Lütfen kampanya başlığı girin!' })
+            return
+        }
+
+        if (!form.target_link || !form.target_link.trim()) {
+            setMessage({ type: 'error', text: 'Lütfen hedef link girin!' })
+            return
+        }
+
+        if (!form.image_url || !form.image_url.trim()) {
+            setMessage({ type: 'error', text: 'Lütfen kampanya görseli yükleyin!' })
             return
         }
 
@@ -124,12 +210,13 @@ export default function CampaignsPage() {
         }
 
         try {
+            // Kullanıcı kontrolü
             const { data: { user }, error: userError } = await supabase.auth.getUser()
             if (userError || !user) {
                 throw new Error('Oturum bulunamadı. Lütfen tekrar giriş yapın.')
             }
 
-            // Admin kontrolü (debug için)
+            // Admin kontrolü
             const { data: profile, error: profileError } = await supabase
                 .from('profiles')
                 .select('role')
@@ -137,76 +224,220 @@ export default function CampaignsPage() {
                 .single()
 
             if (profileError) {
-                console.error('Profil çekme hatası:', profileError)
+                console.error('Profil çekme hatası:', JSON.stringify(profileError, null, 2))
             }
 
             if (profile?.role !== 'admin') {
-                throw new Error(`Yetkiniz yok! Admin rolü gerekiyor. Mevcut rolünüz: ${profile?.role || 'bulunamadı'}. Lütfen profil tablosunda role = 'admin' olduğundan emin olun.`)
+                throw new Error(`Yetkiniz yok! Admin rolü gerekiyor. Mevcut rolünüz: ${profile?.role || 'bulunamadı'}. Lütfen ADMIN_YAP_AYDIN.sql dosyasını çalıştırın.`)
             }
 
-            const data = {
-                ...form,
-                created_by: user.id
+            // Veritabanına kaydedilecek data - SADECE MEVCUT SÜTUNLAR
+            const dataToSave: any = {
+                title: form.title.trim(),
+                description: form.description.trim() || null,
+                image_url: form.image_url.trim(),
+                target_link: form.target_link.trim(),
+                is_active: form.is_active,
+                display_location: form.display_location || 'ana_sayfa'
+            }
+
+            // Tarih alanları varsa ekle
+            if (form.start_date) {
+                dataToSave.start_date = form.start_date
+            }
+            if (form.end_date) {
+                dataToSave.end_date = form.end_date
             }
 
             if (editingId) {
-                const { error } = await supabase
+                // GÜNCELLEME
+                const { data, error } = await supabase
                     .from('announcements')
-                    .update(data)
+                    .update(dataToSave)
                     .eq('id', editingId)
+                    .select()
 
                 if (error) {
-                    // RLS hatası kontrolü
-                    if (error.message?.includes('row-level security') || error.message?.includes('policy')) {
-                        throw new Error(`RLS Politikası Hatası: ${error.message}. Lütfen CREATE_CAMPAIGN_SYSTEM.sql dosyasını çalıştırdığınızdan emin olun.`)
+                    // Detaylı hata loglama
+                    console.error('Güncelleme hatası (DETAYLI):', JSON.stringify({
+                        error,
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                        dataToSave
+                    }, null, 2))
+
+                    // Kullanıcı dostu hata mesajları
+                    if (error.message?.includes('row-level security') || error.message?.includes('policy') || error.code === '42501') {
+                        throw new Error('RLS Politikası Hatası: Admin yetkisi yok. Lütfen CREATE_CAMPAIGN_SYSTEM.sql ve ADMIN_YAP_AYDIN.sql dosyalarını çalıştırdığınızdan emin olun.')
                     }
-                    throw error
+                    if (error.message?.includes('could not find') || error.message?.includes('does not exist') || error.code === 'PGRST116') {
+                        throw new Error('Announcements tablosu bulunamadı. Lütfen TAMAMEN_CALISTIR_BUNU.sql dosyasını Supabase SQL Editor\'de çalıştırın.')
+                    }
+                    if (error.message?.includes('column') && error.message?.includes('does not exist')) {
+                        throw new Error(`Veritabanı hatası: Tabloda olmayan bir sütuna yazmaya çalışılıyor. Hata: ${error.message}`)
+                    }
+                    throw new Error(`Güncelleme hatası: ${error.message || 'Bilinmeyen hata'}`)
                 }
-                setMessage({ type: 'success', text: 'Kampanya güncellendi!' })
+
+                setMessage({ type: 'success', text: 'Kampanya başarıyla güncellendi!' })
             } else {
-                const { error } = await supabase
+                // YENİ EKLEME
+                const { data, error } = await supabase
                     .from('announcements')
-                    .insert([data])
+                    .insert([dataToSave])
+                    .select()
 
                 if (error) {
-                    // RLS hatası kontrolü
-                    if (error.message?.includes('row-level security') || error.message?.includes('policy')) {
-                        throw new Error(`RLS Politikası Hatası: ${error.message}. Lütfen CREATE_CAMPAIGN_SYSTEM.sql dosyasını çalıştırdığınızdan emin olun.`)
+                    // Detaylı hata loglama
+                    console.error('Ekleme hatası (DETAYLI):', JSON.stringify({
+                        error,
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                        dataToSave
+                    }, null, 2))
+
+                    // Kullanıcı dostu hata mesajları
+                    if (error.message?.includes('row-level security') || error.message?.includes('policy') || error.code === '42501') {
+                        throw new Error('RLS Politikası Hatası: Admin yetkisi yok. Lütfen CREATE_CAMPAIGN_SYSTEM.sql ve ADMIN_YAP_AYDIN.sql dosyalarını çalıştırdığınızdan emin olun.')
                     }
-                    // Tablo yoksa
-                    if (error.message?.includes('could not find') || error.message?.includes('does not exist')) {
-                        throw new Error('Announcements tablosu bulunamadı. Lütfen CREATE_CAMPAIGN_SYSTEM.sql dosyasını Supabase SQL Editor\'de çalıştırın.')
+                    if (error.message?.includes('could not find') || error.message?.includes('does not exist') || error.code === 'PGRST116') {
+                        throw new Error('Announcements tablosu bulunamadı. Lütfen TAMAMEN_CALISTIR_BUNU.sql dosyasını Supabase SQL Editor\'de çalıştırın.')
                     }
-                    throw error
+                    if (error.message?.includes('column') && error.message?.includes('does not exist')) {
+                        throw new Error(`Veritabanı hatası: Tabloda olmayan bir sütuna yazmaya çalışılıyor. Hata: ${error.message}`)
+                    }
+                    throw new Error(`Ekleme hatası: ${error.message || 'Bilinmeyen hata'}`)
                 }
-                setMessage({ type: 'success', text: 'Kampanya eklendi!' })
+
+                setMessage({ type: 'success', text: 'Kampanya başarıyla eklendi!' })
             }
 
+            // Başarılı - Formu temizle ve listeyi yenile
             setIsModalOpen(false)
             setEditingId(null)
-            setForm({ title: '', target_link: '', image_url: '', is_active: false })
+            setForm({ title: '', description: '', target_link: '', image_url: '', is_active: false, start_date: '', end_date: '', display_location: 'ana_sayfa' })
             setPreviewImage(null)
-            fetchCampaigns()
+            await fetchCampaigns()
         } catch (error: any) {
-            console.error('Kaydetme hatası (DETAYLI):', {
+            // Detaylı hata loglama
+            console.error('Kaydetme hatası (DETAYLI):', JSON.stringify({
                 error,
-                message: error.message,
-                code: error.code,
-                details: error.details,
-                hint: error.hint
+                message: error?.message,
+                code: error?.code,
+                details: error?.details,
+                hint: error?.hint,
+                stack: error?.stack
+            }, null, 2))
+
+            // Kullanıcıya gösterilecek mesaj
+            const errorMessage = error?.message || 'Bilinmeyen bir hata oluştu'
+            setMessage({ type: 'error', text: `❌ ${errorMessage}` })
+        }
+    }
+
+    // PDF İndir (Türkçe karakter desteği ile)
+    const handleDownloadPDF = async () => {
+        try {
+            const doc = new jsPDF()
+            
+            // Türkçe karakter desteği için - Unicode encoding kullan
+            doc.setFont('helvetica')
+            
+            // Başlık - Türkçe karakterleri doğru göster
+            doc.setFontSize(18)
+            const title = activeTab === 'kampanyalar' ? 'Kampanya Goruntulenme Raporu' : 'Haber Goruntulenme Raporu'
+            doc.text(title, 14, 20)
+            
+            // Tarih
+            doc.setFontSize(10)
+            const dateText = `Olusturulma Tarihi: ${new Date().toLocaleDateString('tr-TR')}`
+            doc.text(dateText, 14, 30)
+            
+            // Türkçe karakter dönüştürme fonksiyonu
+            const fixTurkishChars = (text: string): string => {
+                return text
+                    .replace(/ı/g, 'i').replace(/İ/g, 'I')
+                    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+                    .replace(/ü/g, 'u').replace(/Ü/g, 'U')
+                    .replace(/ş/g, 's').replace(/Ş/g, 'S')
+                    .replace(/ö/g, 'o').replace(/Ö/g, 'O')
+                    .replace(/ç/g, 'c').replace(/Ç/g, 'C')
+            }
+            
+            // Tablo verileri - Türkçe karakterleri düzgün göster
+            const tableData = campaigns.map(campaign => [
+                fixTurkishChars(campaign.title || ''),
+                campaign.display_location === 'ana_sayfa' ? 'Ana Sayfa' : 'Haberler',
+                campaign.is_active ? 'Aktif' : 'Pasif',
+                (campaign.view_count || 0).toString(),
+                new Date(campaign.created_at).toLocaleDateString('tr-TR')
+            ])
+            
+            // Tablo oluştur - Türkçe karakter desteği ile
+            autoTable(doc, {
+                head: [['Baslik', 'Konum', 'Durum', 'Goruntulenme', 'Olusturulma']],
+                body: tableData,
+                startY: 40,
+                styles: { 
+                    font: 'helvetica',
+                    fontSize: 9,
+                    cellPadding: 3,
+                    halign: 'left'
+                },
+                headStyles: {
+                    fillColor: [255, 215, 0], // Sarı
+                    textColor: [0, 0, 0],
+                    fontStyle: 'bold'
+                },
+                alternateRowStyles: {
+                    fillColor: [30, 41, 59] // Dark slate
+                },
+                // Türkçe karakter desteği için
+                didParseCell: function (data: any) {
+                    // Hücre içeriğini UTF-8 olarak işle
+                    if (data.cell.text) {
+                        data.cell.text = data.cell.text.map((text: string) => {
+                            // Türkçe karakterleri koru
+                            return text
+                        })
+                    }
+                }
             })
-            const errorMessage = error.message || 'Bilinmeyen bir hata oluştu'
-            setMessage({ type: 'error', text: `Hata: ${errorMessage}` })
+            
+            // Dosyayı indir
+            const fileName = activeTab === 'kampanyalar' 
+                ? `kampanya-raporu-${new Date().toISOString().split('T')[0]}.pdf`
+                : `haber-raporu-${new Date().toISOString().split('T')[0]}.pdf`
+            doc.save(fileName)
+            setMessage({ type: 'success', text: 'PDF başarıyla indirildi!' })
+        } catch (error: any) {
+            console.error('PDF oluşturma hatası:', error)
+            setMessage({ type: 'error', text: `PDF oluşturulamadı: ${error.message}` })
         }
     }
 
     // Düzenle
     const handleEdit = (campaign: any) => {
+        // Tarih formatını düzelt (YYYY-MM-DD)
+        const formatDate = (dateStr: string | null) => {
+            if (!dateStr) return ''
+            const date = new Date(dateStr)
+            return date.toISOString().split('T')[0]
+        }
+
         setForm({
-            title: campaign.title,
-            target_link: campaign.target_link,
-            image_url: campaign.image_url,
-            is_active: campaign.is_active
+            title: campaign.title || '',
+            description: campaign.description || '',
+            target_link: campaign.target_link || '',
+            image_url: campaign.image_url || '',
+            is_active: campaign.is_active || false,
+            start_date: formatDate(campaign.start_date),
+            end_date: formatDate(campaign.end_date),
+            display_location: campaign.display_location || 'ana_sayfa'
         })
         setPreviewImage(campaign.image_url)
         setEditingId(campaign.id)
@@ -247,13 +478,21 @@ export default function CampaignsPage() {
     // Aktif yap
     const handleSetActive = async (id: string) => {
         try {
-            // Önce tümünü pasif yap
-            const { error: updateAll } = await supabase
-                .from('announcements')
-                .update({ is_active: false })
-                .neq('id', id)
+            // Seçilen kaydın display_location'ını kontrol et
+            const selectedItem = campaigns.find(c => c.id === id)
+            
+            // Sadece kampanyalar (ana_sayfa) için diğerlerini pasif yap
+            // Haberler için sınır yok, direkt aktif yap
+            if (selectedItem?.display_location === 'ana_sayfa') {
+                // Önce aynı display_location'daki tümünü pasif yap
+                const { error: updateAll } = await supabase
+                    .from('announcements')
+                    .update({ is_active: false })
+                    .eq('display_location', 'ana_sayfa')
+                    .neq('id', id)
 
-            if (updateAll) throw updateAll
+                if (updateAll) throw updateAll
+            }
 
             // Sonra seçileni aktif yap
             const { error } = await supabase
@@ -262,7 +501,7 @@ export default function CampaignsPage() {
                 .eq('id', id)
 
             if (error) throw error
-            setMessage({ type: 'success', text: 'Kampanya aktif yapıldı!' })
+            setMessage({ type: 'success', text: activeTab === 'kampanyalar' ? 'Kampanya aktif yapıldı!' : 'Haber aktif yapıldı!' })
             fetchCampaigns()
         } catch (error: any) {
             console.error('Aktif yapma hatası:', error)
@@ -282,28 +521,67 @@ export default function CampaignsPage() {
     return (
         <div className="p-6 space-y-6 bg-slate-950 min-h-screen text-slate-200">
             {/* BAŞLIK */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg">
-                    <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-400">
-                        <ImageIcon size={24} />
+            <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-lg">
+                        <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-400">
+                            <ImageIcon size={24} />
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-white">Global Duyuru Sistemi</h1>
+                            <p className="text-slate-400 text-sm">
+                                {activeTab === 'kampanyalar' 
+                                    ? 'Mobil uygulamada görünecek kampanyaları yönetin'
+                                    : 'Mobil uygulamadaki haberler sayfasını yönetin'}
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white">Global Duyuru Sistemi</h1>
-                        <p className="text-slate-400 text-sm">Mobil uygulamada görünecek kampanyaları yönetin</p>
-                    </div>
+                    <button
+                        onClick={() => {
+                            setIsModalOpen(true)
+                            setEditingId(null)
+                            setForm({ 
+                                title: '', 
+                                description: '', 
+                                target_link: '', 
+                                image_url: '', 
+                                is_active: false, 
+                                start_date: '', 
+                                end_date: '',
+                                display_location: activeTab === 'kampanyalar' ? 'ana_sayfa' : 'haberler'
+                            })
+                            setPreviewImage(null)
+                        }}
+                        className="bg-yellow-500 hover:bg-yellow-400 text-black px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg"
+                    >
+                        <Upload size={20} />
+                        {activeTab === 'kampanyalar' ? 'Yeni Kampanya Ekle' : 'Yeni Haber Ekle'}
+                    </button>
                 </div>
-                <button
-                    onClick={() => {
-                        setIsModalOpen(true)
-                        setEditingId(null)
-                        setForm({ title: '', target_link: '', image_url: '', is_active: false })
-                        setPreviewImage(null)
-                    }}
-                    className="bg-yellow-500 hover:bg-yellow-400 text-black px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg"
-                >
-                    <Upload size={20} />
-                    Yeni Kampanya Ekle
-                </button>
+
+                {/* SEKMELER */}
+                <div className="flex gap-2 border-b border-slate-800">
+                    <button
+                        onClick={() => setActiveTab('kampanyalar')}
+                        className={`px-6 py-3 font-bold transition-colors ${
+                            activeTab === 'kampanyalar'
+                                ? 'text-yellow-400 border-b-2 border-yellow-400'
+                                : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                    >
+                        📢 Kampanyalar
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('haberler')}
+                        className={`px-6 py-3 font-bold transition-colors ${
+                            activeTab === 'haberler'
+                                ? 'text-yellow-400 border-b-2 border-yellow-400'
+                                : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                    >
+                        📰 Haberler
+                    </button>
+                </div>
             </div>
 
             {/* MESAJ */}
@@ -322,6 +600,80 @@ export default function CampaignsPage() {
                     </button>
                 </div>
             )}
+
+            {/* KULLANICI İSTATİSTİKLERİ */}
+            <div className="mb-6 bg-slate-900 rounded-xl border border-slate-800 p-6">
+                <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                    <Users size={24} />
+                    Mobil Uygulama Kullanıcı İstatistikleri
+                </h3>
+                {statsLoading ? (
+                    <div className="text-slate-400">Yükleniyor...</div>
+                ) : userStats ? (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                            <div className="text-slate-400 text-sm mb-1">Toplam Kullanıcı</div>
+                            <div className="text-3xl font-bold text-white">{userStats.totalStudents}</div>
+                        </div>
+                        <div className="bg-green-900/20 rounded-lg p-4 border border-green-700">
+                            <div className="text-green-400 text-sm mb-1">Aktif Kullanıcı</div>
+                            <div className="text-3xl font-bold text-green-400">{userStats.activeUsers}</div>
+                        </div>
+                        <div className="bg-red-900/20 rounded-lg p-4 border border-red-700">
+                            <div className="text-red-400 text-sm mb-1">Pasif/Kaldıran</div>
+                            <div className="text-3xl font-bold text-red-400">{userStats.inactiveUsers}</div>
+                        </div>
+                        <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-700">
+                            <div className="text-blue-400 text-sm mb-1">Aktiflik Oranı</div>
+                            <div className="text-3xl font-bold text-blue-400">
+                                {userStats.totalStudents > 0 
+                                    ? Math.round((userStats.activeUsers / userStats.totalStudents) * 100)
+                                    : 0}%
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-slate-400">İstatistikler yüklenemedi</div>
+                )}
+            </div>
+
+            {/* İSTATİSTİKLER VE PDF İNDİRME */}
+            <div className="mb-6 flex flex-wrap gap-4 items-center justify-between">
+                <div className="flex gap-4">
+                    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                        <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                            <Users size={16} />
+                            <span>Toplam Kampanya</span>
+                        </div>
+                        <div className="text-2xl font-bold text-white">{campaigns.length}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                        <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                            <Activity size={16} />
+                            <span>Aktif Kampanya</span>
+                        </div>
+                        <div className="text-2xl font-bold text-yellow-400">
+                            {campaigns.filter(c => c.is_active).length}
+                        </div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                        <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                            <Check size={16} />
+                            <span>Toplam Görüntülenme</span>
+                        </div>
+                        <div className="text-2xl font-bold text-green-400">
+                            {campaigns.reduce((sum, c) => sum + (c.view_count || 0), 0)}
+                        </div>
+                    </div>
+                </div>
+                <button
+                    onClick={handleDownloadPDF}
+                    className="bg-indigo-500 hover:bg-indigo-400 text-white px-6 py-3 rounded-lg font-bold transition-colors flex items-center gap-2"
+                >
+                    <Download size={18} />
+                    PDF İndir
+                </button>
+            </div>
 
             {/* KAMPANYA LİSTESİ */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -369,8 +721,16 @@ export default function CampaignsPage() {
                                     {campaign.target_link}
                                 </a>
                             </div>
-                            <div className="text-xs text-slate-500">
-                                {new Date(campaign.created_at).toLocaleDateString('tr-TR')}
+                            <div className="text-xs text-slate-500 space-y-1">
+                                <div>{new Date(campaign.created_at).toLocaleDateString('tr-TR')}</div>
+                                <div className="text-blue-400">
+                                    📍 {campaign.display_location === 'ana_sayfa' ? 'Ana Sayfa' : 'Haberler'}
+                                </div>
+                                {campaign.view_count !== null && campaign.view_count !== undefined && (
+                                    <div className="text-yellow-400 font-semibold">
+                                        👁️ Görüntülenme: {campaign.view_count || 0}
+                                    </div>
+                                )}
                             </div>
 
                             {/* BUTONLAR */}
@@ -424,7 +784,7 @@ export default function CampaignsPage() {
                                     onClick={() => {
                                         setIsModalOpen(false)
                                         setEditingId(null)
-                                        setForm({ title: '', target_link: '', image_url: '', is_active: false })
+                                        setForm({ title: '', description: '', target_link: '', image_url: '', is_active: false })
                                         setPreviewImage(null)
                                     }}
                                     className="text-slate-400 hover:text-white"
@@ -438,15 +798,59 @@ export default function CampaignsPage() {
                                 {/* BAŞLIK */}
                                 <div>
                                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                                        Kampanya Başlığı *
+                                        {activeTab === 'kampanyalar' ? 'Kampanya Başlığı *' : 'Haber Başlığı *'}
                                     </label>
                                     <input
                                         type="text"
                                         value={form.title}
                                         onChange={(e) => setForm({ ...form, title: e.target.value })}
-                                        placeholder="Örn: Büyük Ödüllü Bilgi Yarışması"
+                                        placeholder={activeTab === 'kampanyalar' 
+                                            ? 'Örn: Büyük Ödüllü Bilgi Yarışması'
+                                            : 'Örn: Yeni Eğitim Programı Duyurusu'}
                                         className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-yellow-500"
                                     />
+                                </div>
+
+                                {/* AÇIKLAMA */}
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                                        {activeTab === 'kampanyalar' ? 'Kampanya Açıklaması' : 'Haber Açıklaması'}
+                                    </label>
+                                    <textarea
+                                        value={form.description}
+                                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                                        placeholder={activeTab === 'kampanyalar'
+                                            ? 'Kampanya hakkında kısa bir açıklama yazın...'
+                                            : 'Haber içeriğini detaylı olarak yazın...'}
+                                        rows={4}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-yellow-500 resize-none"
+                                    />
+                                </div>
+
+                                {/* TARİH ARALIĞI */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                                            Başlangıç Tarihi
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={form.start_date}
+                                            onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                                            Bitiş Tarihi
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={form.end_date}
+                                            onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                                        />
+                                    </div>
                                 </div>
 
                                 {/* LİNK */}
@@ -463,10 +867,10 @@ export default function CampaignsPage() {
                                     />
                                 </div>
 
-                                {/* RESİM YÜKLEME */}
+                                {/* RESİM YÜKLEME - DİKEY FORMAT (9:16) */}
                                 <div>
                                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                                        Kampanya Görseli *
+                                        {activeTab === 'kampanyalar' ? 'Kampanya Görseli *' : 'Haber Görseli *'} (Dikey Format - 9:16 Önerilir)
                                     </label>
                                     <input
                                         ref={fileInputRef}
@@ -488,37 +892,53 @@ export default function CampaignsPage() {
                                         ) : (
                                             <>
                                                 <Upload size={20} />
-                                                <span>Resim Yükle (Max 5MB)</span>
+                                                <span>Resim Yükle (Max 5MB - Dikey Format)</span>
                                             </>
                                         )}
                                     </button>
                                     {previewImage && (
-                                        <div className="mt-4 relative">
-                                            <img
-                                                src={previewImage}
-                                                alt="Preview"
-                                                className="w-full h-48 object-cover rounded-lg border border-slate-700"
-                                            />
-                                            <button
-                                                onClick={() => {
-                                                    setPreviewImage(null)
-                                                    setForm({ ...form, image_url: '' })
-                                                }}
-                                                className="absolute top-2 right-2 bg-red-500 hover:bg-red-400 text-white p-2 rounded-full"
-                                            >
-                                                <X size={16} />
-                                            </button>
+                                        <div className="mt-4 relative flex justify-center">
+                                            <div className="relative w-full max-w-[200px]">
+                                                <img
+                                                    src={previewImage}
+                                                    alt="Preview"
+                                                    className="w-full aspect-[9/16] object-cover rounded-lg border-2 border-yellow-500 shadow-lg"
+                                                    style={{ maxHeight: '400px' }}
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        setPreviewImage(null)
+                                                        setForm({ ...form, image_url: '' })
+                                                    }}
+                                                    className="absolute top-2 right-2 bg-red-500 hover:bg-red-400 text-white p-2 rounded-full shadow-lg"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                     {form.image_url && !previewImage && (
-                                        <div className="mt-4 relative">
-                                            <img
-                                                src={form.image_url}
-                                                alt="Current"
-                                                className="w-full h-48 object-cover rounded-lg border border-slate-700"
-                                            />
+                                        <div className="mt-4 relative flex justify-center">
+                                            <div className="relative w-full max-w-[200px]">
+                                                <img
+                                                    src={form.image_url}
+                                                    alt="Current"
+                                                    className="w-full aspect-[9/16] object-cover rounded-lg border-2 border-slate-700"
+                                                    style={{ maxHeight: '400px' }}
+                                                />
+                                            </div>
                                         </div>
                                     )}
+                                </div>
+
+                                {/* GÖRÜNTÜLENME YERİ - Otomatik olarak sekmeye göre ayarlanır */}
+                                <input type="hidden" value={form.display_location} />
+                                <div className="bg-blue-900/20 border border-blue-700 rounded-lg p-4">
+                                    <p className="text-sm text-blue-300">
+                                        {activeTab === 'kampanyalar'
+                                            ? '📍 Bu içerik Ana Sayfa\'daki kampanya kartında görünecek'
+                                            : '📍 Bu içerik Haberler sayfasında listelenecek'}
+                                    </p>
                                 </div>
 
                                 {/* AKTİF Mİ */}
@@ -531,7 +951,9 @@ export default function CampaignsPage() {
                                         className="w-5 h-5 rounded border-slate-700 bg-slate-800 text-yellow-500 focus:ring-2 focus:ring-yellow-500"
                                     />
                                     <label htmlFor="is_active" className="text-sm text-slate-300">
-                                        Bu kampanyayı aktif yap (Mobilde görünsün)
+                                        {activeTab === 'kampanyalar'
+                                            ? 'Bu kampanyayı aktif yap (Mobilde görünsün)'
+                                            : 'Bu haberi aktif yap (Mobilde görünsün)'}
                                     </label>
                                 </div>
                             </div>
@@ -542,7 +964,7 @@ export default function CampaignsPage() {
                                     onClick={() => {
                                         setIsModalOpen(false)
                                         setEditingId(null)
-                                        setForm({ title: '', target_link: '', image_url: '', is_active: false })
+                                        setForm({ title: '', description: '', target_link: '', image_url: '', is_active: false, start_date: '', end_date: '', display_location: 'ana_sayfa' })
                                         setPreviewImage(null)
                                     }}
                                     className="flex-1 bg-slate-800 hover:bg-slate-700 text-white px-6 py-3 rounded-lg font-bold transition-colors"

@@ -16,7 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../lib/supabase';
 import { useStudent } from '../../context/StudentContext';
 import { Wallet, Coffee, Trophy, ArrowRight } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import React from 'react';
 
 const EVENT_NOTIFICATIONS_KEY = '@skytech:event_notifications';
 
@@ -38,6 +39,8 @@ export default function HomeScreen() {
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [promoPulseAnim] = useState(new Animated.Value(1));
+  const [borderPulseAnim] = useState(new Animated.Value(1)); // Border yanıp sönme animasyonu (opacity için)
+  const [borderWidthAnim] = useState(new Animated.Value(3)); // Border kalınlığı animasyonu
   const [eventNotificationCount, setEventNotificationCount] = useState<number>(0);
   const [activeAnnouncement, setActiveAnnouncement] = useState<any>(null);
   const router = useRouter();
@@ -110,6 +113,56 @@ export default function HomeScreen() {
     pulseAnim.stopAnimation();
   };
 
+  // Kampanya kartı border animasyonu - Aktif kampanya varsa sürekli yanıp sönsün
+  useEffect(() => {
+    if (activeAnnouncement) {
+      // Border kalınlığı animasyonu (3 -> 6 -> 3) - Daha belirgin yanıp sönme
+      const borderWidthAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(borderWidthAnim, {
+            toValue: 6,
+            duration: 1000,
+            useNativeDriver: false,
+          }),
+          Animated.timing(borderWidthAnim, {
+            toValue: 3,
+            duration: 1000,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+
+      // Border opacity animasyonu (1 -> 0.4 -> 1) - Daha belirgin yanıp sönme
+      const borderOpacityAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(borderPulseAnim, {
+            toValue: 0.4,
+            duration: 1000,
+            useNativeDriver: false,
+          }),
+          Animated.timing(borderPulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+
+      borderWidthAnimation.start();
+      borderOpacityAnimation.start();
+
+      return () => {
+        borderWidthAnimation.stop();
+        borderOpacityAnimation.stop();
+        borderWidthAnim.setValue(3);
+        borderPulseAnim.setValue(1);
+      };
+    } else {
+      borderWidthAnim.setValue(1);
+      borderPulseAnim.setValue(1);
+    }
+  }, [activeAnnouncement]);
+
   // Etkinlik bildirimlerini yükle
   useEffect(() => {
     const loadEventNotifications = async () => {
@@ -123,79 +176,85 @@ export default function HomeScreen() {
     loadEventNotifications();
   }, []);
 
-  // Aktif kampanyayı çek (EN SON AKTİF OLAN)
-  useEffect(() => {
-    const fetchActiveAnnouncement = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('announcements')
-          .select('*')
-          .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+  // Aktif kampanyayı çek (TARİH ARALIĞI KONTROLLÜ) - useFocusEffect ile her sayfa açıldığında yenile
+  const fetchActiveAnnouncement = React.useCallback(async () => {
+    try {
+      const now = new Date().toISOString();
+      
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .eq('is_active', true)
+        .eq('display_location', 'ana_sayfa') // SADECE KAMPANYALAR - Haberler değil!
+        .lte('start_date', now) // Başlangıç tarihi geçmiş veya bugün
+        .gte('end_date', now)   // Bitiş tarihi gelecek veya bugün
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-        if (error) {
-          console.error('Kampanya çekme hatası:', error);
-          setActiveAnnouncement(null);
-          return;
-        }
-
-        setActiveAnnouncement(data || null);
-      } catch (error) {
-        console.error('Kampanya yükleme hatası:', error);
+      if (error) {
+        console.error('Kampanya çekme hatası:', error);
         setActiveAnnouncement(null);
+        return;
       }
-    };
 
-    fetchActiveAnnouncement();
-
-    // Real-time subscription for announcements
-    const announcementChannel = supabase
-      .channel('announcements-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'announcements',
-        },
-        () => {
-          fetchActiveAnnouncement();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(announcementChannel);
-    };
+      setActiveAnnouncement(data || null);
+    } catch (error) {
+      console.error('Kampanya yükleme hatası:', error);
+      setActiveAnnouncement(null);
+    }
   }, []);
 
+  // Her sayfa odaklandığında kampanyayı yeniden çek
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchActiveAnnouncement();
+
+      // Real-time subscription for announcements
+      const announcementChannel = supabase
+        .channel('announcements-updates')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'announcements',
+          },
+          () => {
+            fetchActiveAnnouncement();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(announcementChannel);
+      };
+    }, [fetchActiveAnnouncement])
+  );
+
+  // Uygulama kullanım istatistiği kaydet
   useEffect(() => {
     if (!student?.id) return;
 
+    const logAppUsage = async () => {
+      try {
+        await supabase.from('app_usage').insert({
+          student_id: student.id,
+          action: 'app_open',
+          feature_name: 'home',
+          device_info: {
+            platform: 'mobile',
+            timestamp: new Date().toISOString()
+          }
+        });
+      } catch (error) {
+        console.error('Kullanım istatistiği kaydedilemedi:', error);
+      }
+    };
+
+    logAppUsage();
     fetchBalance();
     fetchRecentTransactions();
-
-    // Yarışma kartı animasyonu - Aktif kampanya varsa yanıp sönsün
-    let promoAnimation: Animated.CompositeAnimation | null = null;
-    if (activeAnnouncement) {
-      promoAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(promoPulseAnim, {
-            toValue: 0.6,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(promoPulseAnim, {
-            toValue: 1,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      promoAnimation.start();
-    }
 
     // CANLI BAKİYE GÜNCELLEMESİ - Real-time subscription
     const balanceChannel = supabase
@@ -242,13 +301,10 @@ export default function HomeScreen() {
       .subscribe();
 
     return () => {
-      if (promoAnimation) {
-        promoAnimation.stop();
-      }
       supabase.removeChannel(balanceChannel);
       supabase.removeChannel(ordersChannel);
     };
-  }, [student?.id, activeAnnouncement]);
+  }, [student?.id]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -336,57 +392,101 @@ export default function HomeScreen() {
             </TouchableOpacity>
 
             {/* SkyTech Ödüllü Etkinliklerimiz - Dinamik Kampanya Kartı */}
-            <Animated.View style={[styles.promoCardWrapper, { opacity: activeAnnouncement ? promoPulseAnim : 1 }]}>
-              <TouchableOpacity
+            <Animated.View 
+              style={[
+                styles.promoCardWrapper,
+                activeAnnouncement && {
+                  transform: [{ scale: promoPulseAnim }]
+                }
+              ]}
+            >
+              <Animated.View
                 style={[
-                  styles.quickActionCard,
-                  activeAnnouncement ? styles.promoCardActive : styles.promoCard,
-                  activeAnnouncement && styles.promoCardWithImage
+                  activeAnnouncement ? {
+                    borderWidth: borderWidthAnim,
+                    borderColor: borderPulseAnim.interpolate({
+                      inputRange: [0.4, 1],
+                      outputRange: ['rgba(255, 215, 0, 0.4)', 'rgba(255, 215, 0, 1)'], // Sarı border opacity animasyonu
+                    }),
+                    borderRadius: 12,
+                  } : {}
                 ]}
-                onPress={async () => {
-                  if (activeAnnouncement?.target_link) {
-                    try {
-                      const url = activeAnnouncement.target_link;
-                      const canOpen = await Linking.canOpenURL(url);
-                      if (canOpen) {
-                        await Linking.openURL(url);
-                      } else {
-                        console.error('URL açılamıyor:', url);
-                      }
-                    } catch (error) {
-                      console.error('Link açma hatası:', error);
-                    }
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.quickActionCard,
+                    activeAnnouncement ? {
+                      ...styles.promoCardActive,
+                      borderWidth: 0, // İç kartta border yok, dış Animated.View'de var
+                    } : styles.promoCardInactive
+                  ]}
+                  onPress={() => {
+                  if (activeAnnouncement) {
+                    // Detay sayfasına git (kampanya ID ile)
+                    router.push({
+                      pathname: '/campaign-detail',
+                      params: { id: activeAnnouncement.id }
+                    });
                   } else {
-                    // Profil sayfasına git ve bildirimler modalını aç
-                    router.push('/(tabs)/profile');
+                    // Aktif kampanya yoksa tepkisiz kal
+                    console.log('Aktif kampanya yok');
                   }
                 }}
+                disabled={!activeAnnouncement}
               >
-                {activeAnnouncement?.image_url ? (
-                  <Image
-                    source={{ uri: activeAnnouncement.image_url }}
-                    style={styles.promoImageFull}
-                    resizeMode="cover"
-                  />
+                {activeAnnouncement ? (
+                  <>
+                    {/* Aktif Kampanya - Sarı Arka Plan, Animasyonlu, Rozetli */}
+                    <View style={styles.promoCardContent}>
+                      {/* Kırmızı Rozet */}
+                      <View style={styles.promoBadge}>
+                        <Text style={styles.promoBadgeText}>1</Text>
+                      </View>
+                      
+                      {/* Logo - ÜSTTE BÜYÜK */}
+                      <View style={styles.promoLogoContainer}>
+                        <Image
+                          source={require('../../assets/logo.png')}
+                          style={styles.promoLogo}
+                          resizeMode="contain"
+                        />
+                      </View>
+                      
+                      {/* İçerik */}
+                      <View style={styles.promoTextContainer}>
+                        <Text style={styles.promoTitle} numberOfLines={2}>
+                          {activeAnnouncement.title}
+                        </Text>
+                        {activeAnnouncement.description && (
+                          <Text style={styles.promoDescription} numberOfLines={2}>
+                            {activeAnnouncement.description}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  </>
                 ) : (
                   <>
-                    <View style={[styles.iconContainer, { backgroundColor: '#fbbf2420' }]}>
-                      <Trophy size={28} color="#fbbf24" />
-                      {eventNotificationCount > 0 && (
-                        <View style={styles.badge}>
-                          <Text style={styles.badgeText}>{eventNotificationCount}</Text>
-                        </View>
-                      )}
+                    {/* Aktif Kampanya Yok - Gri, Sönük */}
+                    <View style={styles.promoCardContentInactive}>
+                      <View style={[styles.iconContainer, { backgroundColor: '#64748b20' }]}>
+                        <Image
+                          source={require('../../assets/logo.png')}
+                          style={styles.promoLogoInactive}
+                          resizeMode="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionTitle, { color: '#64748b' }]}>
+                        SkyTech Ödüllü Etkinliklerimiz
+                      </Text>
+                      <Text style={[styles.promoText, { color: '#64748b' }]}>
+                        Çok Yakında!
+                      </Text>
                     </View>
-                    <Text style={styles.quickActionTitle}>SkyTech Ödüllü Etkinliklerimiz</Text>
-                    {eventNotificationCount > 0 ? (
-                      <Text style={styles.promoText}>{eventNotificationCount} Yeni Etkinlik!</Text>
-                    ) : (
-                      <Text style={styles.promoText}>Çok Yakında!</Text>
-                    )}
                   </>
                 )}
-              </TouchableOpacity>
+                </TouchableOpacity>
+              </Animated.View>
             </Animated.View>
           </View>
         </View>
@@ -516,6 +616,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+    justifyContent: 'center', // İçeriği dikey olarak ortala
     borderWidth: 1,
     borderColor: '#334155',
   },
@@ -554,19 +655,100 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   promoCardActive: {
-    borderColor: '#fbbf24',
-    borderWidth: 2,
-    overflow: 'hidden',
-  },
-  promoCardWithImage: {
-    padding: 0,
+    backgroundColor: '#1e293b', // Dark mode rengi
+    borderColor: '#FFD700', // Sarı border
+    borderWidth: 3,
     minHeight: 140,
-    overflow: 'hidden',
+    position: 'relative',
   },
-  promoImageFull: {
+  promoCardInactive: {
+    backgroundColor: '#64748b20',
+    borderColor: '#64748b',
+    borderWidth: 1,
+    opacity: 0.6,
+  },
+  promoCardContent: {
     width: '100%',
     height: '100%',
-    minHeight: 140,
+    padding: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  promoCardContentInactive: {
+    width: '100%',
+    height: '100%',
+    padding: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  promoLogoContainer: {
+    width: 80,
+    height: 80,
+    marginBottom: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 40,
+    padding: 8,
+  },
+  promoLogo: {
+    width: '100%',
+    height: '100%',
+  },
+  promoLogoInactive: {
+    width: 40,
+    height: 40,
+    opacity: 0.5,
+  },
+  promoBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#ef4444',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+    zIndex: 10,
+  },
+  promoBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  promoTextContainer: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 8,
+  },
+  promoTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff', // Dark mode için beyaz
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  promoDescription: {
+    fontSize: 12,
+    color: '#e2e8f0', // Dark mode için açık gri
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  promoActionHint: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: 8,
+  },
+  promoActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1e293b',
   },
   promoText: {
     fontSize: 12,
