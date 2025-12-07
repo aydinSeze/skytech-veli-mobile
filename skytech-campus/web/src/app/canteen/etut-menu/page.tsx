@@ -1,13 +1,13 @@
 'use client'
 
 import { createClient } from '@/utils/supabase/client'
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState } from 'react'
 import { Calendar, Plus, Edit2, Trash2, X, Bell, Check } from 'lucide-react'
-import { useSearchParams } from 'next/navigation'
 
-function EtutMenuContent() {
+export const dynamic = 'force-dynamic'
+
+export default function EtutMenuPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [menus, setMenus] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
@@ -18,7 +18,9 @@ function EtutMenuContent() {
 
     useEffect(() => {
         const fetchData = async () => {
-            const urlSchoolId = searchParams.get('schoolId')
+            // URL parametrelerini client-side'da oku
+            const urlParams = new URLSearchParams(window.location.search)
+            const urlSchoolId = urlParams.get('schoolId')
             
             if (urlSchoolId) {
                 setUserSchoolId(urlSchoolId)
@@ -31,7 +33,7 @@ function EtutMenuContent() {
             }
         }
         fetchData()
-    }, [searchParams])
+    }, []) // URL parametreleri client-side'da okunuyor, dependency gerekmiyor
 
     useEffect(() => {
         if (userSchoolId) {
@@ -273,14 +275,6 @@ function EtutMenuContent() {
                 </div>
             )}
         </div>
-    )
-}
-
-export default function EtutMenuPage() {
-    return (
-        <Suspense fallback={<div className="p-10 text-white text-center bg-slate-950 min-h-screen">Yükleniyor...</div>}>
-            <EtutMenuContent />
-        </Suspense>
     )
 }
 
