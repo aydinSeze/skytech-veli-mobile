@@ -164,7 +164,6 @@ export default function StudentsPage() {
                         details: error.details,
                         hint: error.hint,
                         code: error.code,
-                        statusCode: error.statusCode,
                         status: error.status,
                         toString: error.toString(),
                         name: error.name
@@ -269,7 +268,6 @@ export default function StudentsPage() {
                             details: error.details,
                             hint: error.hint,
                             code: error.code,
-                            statusCode: error.statusCode,
                             status: error.status,
                             toString: error.toString(),
                             name: error.name
