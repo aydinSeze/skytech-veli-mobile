@@ -21,7 +21,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.aydinsezerr.skytechmobile"
     },
     "web": {
       "favicon": "./assets/logo.png",
@@ -41,7 +42,11 @@
     ],
     "extra": {
       "supabaseUrl": "https://oirqddnonygailwohviz.supabase.co",
-      "supabaseAnonKey": "sb_publishable_TV8fQO2oekdzhqNDVDYLMQ_ubN4S_Tj"
+      "supabaseAnonKey": "sb_publishable_TV8fQO2oekdzhqNDVDYLMQ_ubN4S_Tj",
+      "router": {},
+      "eas": {
+        "projectId": "270d5c47-e98b-46f8-83c2-65cd04827d24"
+      }
     }
   }
 }
