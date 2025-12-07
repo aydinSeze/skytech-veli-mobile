@@ -87,6 +87,9 @@ export default function TabLayout() {
           backgroundColor: '#1e293b',
           borderTopColor: '#334155',
           borderTopWidth: 1,
+          paddingBottom: 8, // Alt navigasyon bar'ı hafifçe yukarı kaydır
+          paddingTop: 8, // Üstten de hafif padding
+          height: 65, // Sabit yükseklik (varsayılan ~60, biraz artırdık)
         },
       }}
     >
