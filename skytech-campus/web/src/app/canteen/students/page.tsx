@@ -338,7 +338,7 @@ export default function StudentsPage() {
 
     useEffect(() => {
         fetchData()
-    }, [searchParams])
+    }, [])
 
     // TEKLİ KAYIT
     const handleSave = async () => {

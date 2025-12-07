@@ -72,7 +72,7 @@ export default function SuppliersPage() {
         }
     }
 
-    useEffect(() => { fetchData() }, [searchParams])
+    useEffect(() => { fetchData() }, [])
 
     // Form İşlemleri
     const resetForm = () => {

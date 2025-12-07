@@ -139,7 +139,7 @@ export default function POSPage() {
                 supabase.removeChannel(channel)
             }
         }
-    }, [supabase, searchParams])
+    }, [supabase])
 
     // 2. Ürünleri Çek (Sadece Okul ID'ye göre)
     useEffect(() => {

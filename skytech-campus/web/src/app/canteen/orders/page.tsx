@@ -78,7 +78,7 @@ export default function OrdersPage() {
 
     useEffect(() => {
         fetchData()
-    }, [router, supabase, searchParams])
+    }, [router, supabase])
 
     if (loading) return <div className="p-10 text-white text-center">Yükleniyor...</div>
 

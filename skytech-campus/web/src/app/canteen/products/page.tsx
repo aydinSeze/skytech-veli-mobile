@@ -116,7 +116,7 @@ export default function ProductsPage() {
         }
     }
 
-    useEffect(() => { fetchData() }, [searchParams])
+    useEffect(() => { fetchData() }, [])
 
     // Formu Sıfırla (Yeni Barkodla)
     const resetForm = async () => {
