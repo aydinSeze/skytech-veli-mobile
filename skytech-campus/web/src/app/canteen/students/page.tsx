@@ -161,12 +161,9 @@ export default function StudentsPage() {
                 if (error) {
                     const errorInfo = {
                         message: error.message,
-                        details: error.details,
-                        hint: error.hint,
                         code: error.code,
-                        status: error.status,
-                        toString: error.toString(),
-                        name: error.name
+                        details: error.details,
+                        hint: error.hint
                     }
                     
                     console.error('❌ Öğrenci çekme hatası (DETAYLI - Admin):', errorInfo)
@@ -265,12 +262,9 @@ export default function StudentsPage() {
                         // Error objesini stringify et (circular reference olabilir)
                         const errorInfo = {
                             message: error.message,
-                            details: error.details,
-                            hint: error.hint,
                             code: error.code,
-                            status: error.status,
-                            toString: error.toString(),
-                            name: error.name
+                            details: error.details,
+                            hint: error.hint
                         }
                         
                         console.error('❌ Öğrenci çekme hatası (DETAYLI):', errorInfo)
