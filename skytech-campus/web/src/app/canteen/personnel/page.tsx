@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { Plus, Search, Edit2, Trash2, User, Briefcase, CreditCard, X, Save, MoreVertical, Wallet, Banknote, Clock, FileText } from 'lucide-react'
 import { addPersonnelBalance, updatePersonnel, deletePersonnel, addPersonnel } from '@/actions/personnel-actions'
@@ -22,7 +21,6 @@ interface Personnel {
 export const dynamic = 'force-dynamic'
 
 export default function PersonnelPage() {
-    const searchParams = useSearchParams()
     const [personnel, setPersonnel] = useState<Personnel[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState('')
@@ -57,7 +55,7 @@ export default function PersonnelPage() {
     // Verileri Çek
     useEffect(() => {
         fetchPersonnel()
-    }, [searchParams])
+    }, [])
 
     // Dışarı tıklayınca dropdown kapat
     useEffect(() => {
@@ -69,7 +67,8 @@ export default function PersonnelPage() {
     const fetchPersonnel = async () => {
         try {
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             if (urlSchoolId) {

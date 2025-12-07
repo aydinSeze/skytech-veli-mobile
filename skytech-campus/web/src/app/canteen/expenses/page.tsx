@@ -2,7 +2,6 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -24,7 +23,6 @@ const latinify = (str: string) => {
 
 export default function ExpensesPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [expenses, setExpenses] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
@@ -43,7 +41,8 @@ export default function ExpensesPage() {
 
     useEffect(() => {
         const fetchInitialData = async () => {
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             
             if (urlSchoolId) {
                 // Yönetici modu - URL'den schoolId al

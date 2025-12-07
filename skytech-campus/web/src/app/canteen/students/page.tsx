@@ -2,7 +2,6 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -14,7 +13,6 @@ export const dynamic = 'force-dynamic'
 
 export default function StudentsPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [students, setStudents] = useState<any[]>([])
     const [schools, setSchools] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
@@ -119,7 +117,8 @@ export default function StudentsPage() {
         setLoading(true)
         try {
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             console.log('🔍 Öğrenci verileri çekiliyor...', { urlSchoolId })

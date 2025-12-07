@@ -2,14 +2,12 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { Dices } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default function ProductsPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [products, setProducts] = useState<any[]>([])
     const [suppliers, setSuppliers] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
@@ -71,7 +69,8 @@ export default function ProductsPage() {
             setLoading(true)
 
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             if (urlSchoolId) {

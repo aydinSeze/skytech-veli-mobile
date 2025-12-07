@@ -2,13 +2,11 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
 export default function TransactionsPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [transactions, setTransactions] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [filter, setFilter] = useState<'all' | 'purchase' | 'deposit'>('all')
@@ -18,7 +16,8 @@ export default function TransactionsPage() {
             setLoading(true)
 
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             if (urlSchoolId) {

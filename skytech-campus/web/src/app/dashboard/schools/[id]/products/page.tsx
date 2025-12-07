@@ -2,15 +2,15 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { Package, Plus, Edit2, Trash2, X } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default function SchoolProductsPage() {
     const params = useParams()
-    const searchParams = useSearchParams()
-    const schoolId = params?.id as string || searchParams.get('schoolId')
+    const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+    const schoolId = params?.id as string || urlParams.get('schoolId')
     const supabase = createClient()
     
     const [products, setProducts] = useState<any[]>([])

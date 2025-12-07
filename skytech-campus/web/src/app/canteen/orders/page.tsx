@@ -2,7 +2,7 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { Truck, Package, ArrowRight, Smartphone, CheckCircle, Clock, XCircle } from 'lucide-react'
 import Link from 'next/link'
 
@@ -11,7 +11,6 @@ export const dynamic = 'force-dynamic'
 export default function OrdersPage() {
     const supabase = createClient()
     const router = useRouter()
-    const searchParams = useSearchParams()
     const [suppliers, setSuppliers] = useState<any[]>([])
     const [mobileOrders, setMobileOrders] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
@@ -23,7 +22,8 @@ export default function OrdersPage() {
             setLoading(true)
 
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             if (urlSchoolId) {

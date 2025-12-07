@@ -2,7 +2,6 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useRef, useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
 import confetti from 'canvas-confetti'
 import { refundTransaction, processPayment } from '@/actions/pos-actions'
 import { RefreshCcw, Minus, Plus, Trash2, History, ScanBarcode, Search } from 'lucide-react'
@@ -11,7 +10,6 @@ export const dynamic = 'force-dynamic'
 
 export default function POSPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [products, setProducts] = useState<any[]>([])
     const [canteens, setCanteens] = useState<any[]>([])
     const [selectedCanteen, setSelectedCanteen] = useState<string>('')
@@ -63,7 +61,8 @@ export default function POSPage() {
                 
                 if (isAdmin || userRole === 'admin' || userRole === 'school_admin') {
                     // Yönetici için URL parametresinden schoolId al
-                    const urlSchoolId = searchParams.get('schoolId')
+                    const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+                    const urlSchoolId = urlParams.get('schoolId')
                     if (urlSchoolId) {
                         targetSchoolId = urlSchoolId
                     } else if (profile?.school_id) {

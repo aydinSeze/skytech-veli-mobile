@@ -2,7 +2,6 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 
 export default function LoginPage() {
     const [email, setEmail] = useState('')
@@ -12,7 +11,6 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false)
     const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-    const searchParams = useSearchParams()
     const supabase = createClient()
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -113,7 +111,8 @@ export default function LoginPage() {
 
                 // 7. Her şey yolundaysa yönlendir
                 // Redirect parametresini kontrol et
-                const redirectPath = searchParams.get('redirect') || null
+                const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+                const redirectPath = urlParams.get('redirect') || null
 
                 if (role === 'admin' || role === 'school_admin') {
                     // Admin için redirect parametresi varsa oraya, yoksa dashboard'a git

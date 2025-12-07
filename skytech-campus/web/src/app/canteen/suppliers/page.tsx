@@ -8,7 +8,6 @@ export const dynamic = 'force-dynamic'
 
 export default function SuppliersPage() {
     const supabase = createClient()
-    const searchParams = useSearchParams()
     const [suppliers, setSuppliers] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
@@ -29,7 +28,8 @@ export default function SuppliersPage() {
             setLoading(true)
 
             // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
-            const urlSchoolId = searchParams.get('schoolId')
+            const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+            const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
             
             if (urlSchoolId) {

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import {
@@ -16,7 +16,6 @@ export default function CanteenLayout({
 }) {
     const pathname = usePathname()
     const router = useRouter()
-    const searchParams = useSearchParams()
     const supabase = createClient()
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
     const [schoolName, setSchoolName] = useState<string>('')
@@ -25,7 +24,8 @@ export default function CanteenLayout({
     const [currentDateTime, setCurrentDateTime] = useState<string>('')
     
     // URL'den schoolId parametresini al (yönetici için)
-    const schoolId = searchParams.get('schoolId')
+    const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+    const schoolId = urlParams.get('schoolId')
 
     const handleLogout = useCallback(async () => {
         await supabase.auth.signOut()
