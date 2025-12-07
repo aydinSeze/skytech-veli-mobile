@@ -160,24 +160,27 @@ export default function StudentsPage() {
 
                 if (error) {
                     const errorInfo = {
-                        message: error.message,
-                        code: error.code,
-                        details: error.details,
-                        hint: error.hint
+                        message: (error as any)?.message,
+                        code: (error as any)?.code,
+                        details: (error as any)?.details,
+                        hint: (error as any)?.hint
                     }
                     
                     console.error('❌ Öğrenci çekme hatası (DETAYLI - Admin):', errorInfo)
                     console.error('❌ Ham Error Objesi:', error)
                     
-                    if (error.message?.includes('permission') || 
-                        error.message?.includes('denied') || 
-                        error.code === '42501' ||
-                        error.code === 'PGRST301' ||
+                    const errorMessage = (error as any)?.message || 'Bilinmeyen hata'
+                    const errorCode = (error as any)?.code
+                    
+                    if (errorMessage.includes('permission') || 
+                        errorMessage.includes('denied') || 
+                        errorCode === '42501' ||
+                        errorCode === 'PGRST301' ||
                         !data) {
                         console.error('🚫 RLS POLİTİKASI HATASI TESPİT EDİLDİ!')
                         alert('Erişim hatası: Bu okulun öğrencilerini görme yetkiniz yok.\n\nLütfen DIAGNOSE_STUDENTS_ERROR.sql dosyasını çalıştırın.')
                     } else {
-                        alert(`Öğrenci verileri çekilemedi: ${error.message || 'Bilinmeyen hata'}`)
+                        alert(`Öğrenci verileri çekilemedi: ${errorMessage}`)
                     }
                     
                     setStudents([])
@@ -261,10 +264,10 @@ export default function StudentsPage() {
                     if (error) {
                         // Error objesini stringify et (circular reference olabilir)
                         const errorInfo = {
-                            message: error.message,
-                            code: error.code,
-                            details: error.details,
-                            hint: error.hint
+                            message: (error as any)?.message,
+                            code: (error as any)?.code,
+                            details: (error as any)?.details,
+                            hint: (error as any)?.hint
                         }
                         
                         console.error('❌ Öğrenci çekme hatası (DETAYLI):', errorInfo)
@@ -273,16 +276,19 @@ export default function StudentsPage() {
                         console.error('❌ User ID:', user.id)
                         
                         // RLS hatası kontrolü
-                        if (error.message?.includes('permission') || 
-                            error.message?.includes('denied') || 
-                            error.code === '42501' ||
-                            error.code === 'PGRST301' ||
+                        const errorMessage = (error as any)?.message || 'Bilinmeyen hata'
+                        const errorCode = (error as any)?.code
+                        
+                        if (errorMessage.includes('permission') || 
+                            errorMessage.includes('denied') || 
+                            errorCode === '42501' ||
+                            errorCode === 'PGRST301' ||
                             !data) {
                             console.error('🚫 RLS POLİTİKASI HATASI TESPİT EDİLDİ!')
                             console.error('💡 Çözüm: FIX_STUDENTS_VISIBILITY_URGENT.sql dosyasını Supabase\'de çalıştırın')
                             alert('Erişim hatası: Bu okulun öğrencilerini görme yetkiniz yok.\n\nLütfen FIX_STUDENTS_VISIBILITY_URGENT.sql dosyasını Supabase\'de çalıştırın.')
                         } else {
-                            alert(`Öğrenci verileri çekilemedi: ${error.message || 'Bilinmeyen hata'}`)
+                            alert(`Öğrenci verileri çekilemedi: ${errorMessage}`)
                         }
                         
                         setStudents([])
