@@ -70,7 +70,7 @@ export default function TransactionsPage() {
 
     useEffect(() => {
         fetchTransactions()
-    }, [filter, searchParams])
+    }, [filter])
 
     // Ürün detaylarını parse etme fonksiyonu
     const parseDetails = (json: any) => {
