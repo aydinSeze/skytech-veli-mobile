@@ -2,7 +2,6 @@
 
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 

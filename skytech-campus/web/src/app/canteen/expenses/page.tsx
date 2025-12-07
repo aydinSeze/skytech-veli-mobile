@@ -64,7 +64,7 @@ export default function ExpensesPage() {
             }
         }
         fetchInitialData()
-    }, [searchParams])
+    }, [])
 
     useEffect(() => {
         if (!userSchoolId) return
