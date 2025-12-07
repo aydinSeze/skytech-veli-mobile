@@ -784,7 +784,7 @@ export default function CampaignsPage() {
                                     onClick={() => {
                                         setIsModalOpen(false)
                                         setEditingId(null)
-                                        setForm({ title: '', description: '', target_link: '', image_url: '', is_active: false })
+                                        setForm({ title: '', description: '', target_link: '', image_url: '', is_active: false, start_date: '', end_date: '', display_location: activeTab === 'kampanyalar' ? 'ana_sayfa' : 'haberler' })
                                         setPreviewImage(null)
                                     }}
                                     className="text-slate-400 hover:text-white"
