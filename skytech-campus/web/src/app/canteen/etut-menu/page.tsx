@@ -5,8 +5,6 @@ import { useEffect, useState, Suspense } from 'react'
 import { Calendar, Plus, Edit2, Trash2, X, Bell, Check } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 
-export const dynamic = 'force-dynamic'
-
 function EtutMenuContent() {
     const supabase = createClient()
     const searchParams = useSearchParams()
@@ -280,7 +278,7 @@ function EtutMenuContent() {
 
 export default function EtutMenuPage() {
     return (
-        <Suspense fallback={<div className="p-10 text-white text-center">Yükleniyor...</div>}>
+        <Suspense fallback={<div className="p-10 text-white text-center bg-slate-950 min-h-screen">Yükleniyor...</div>}>
             <EtutMenuContent />
         </Suspense>
     )
