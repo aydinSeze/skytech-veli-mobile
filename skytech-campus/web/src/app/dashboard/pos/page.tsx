@@ -126,7 +126,7 @@ export default function POSPage() {
                 canteen_id: selectedCanteen, student_id: student.id, amount: cartTotal, transaction_type: 'purchase', items_json: cart
             }])
 
-            if (recordResult.isRecord) {
+            if (recordResult && recordResult.isRecord) {
                 confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } })
                 alert(`🚀 REKOR KIRILDI! TEBRİKLER!\n\nBugünkü Ciro (₺${recordResult.newTodayTotal}), Dünü (₺${recordResult.yesterdayTotal}) geçti!`)
             } else {
