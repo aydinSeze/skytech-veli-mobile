@@ -80,7 +80,7 @@ export default function LoginPage() {
                     let schoolIsActive = true;
 
                     // A. Önce profile'daki school_id ile kontrol et
-                    if (profile.school_id) {
+                    if (profile && profile.school_id) {
                         const { data: school } = await supabase
                             .from('schools')
                             .select('is_active')
