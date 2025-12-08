@@ -36,13 +36,18 @@ export async function addStudentBalance(studentId: string, amount: number) {
 
         if (updateError) throw updateError
 
-        // 4. İşlem Kaydı Oluştur
+        // 4. İşlem Kaydı Oluştur (bakiye bilgileri ile)
+        const previousBalance = student.wallet_balance || 0;
+        const finalNewBalance = newBalance;
+        
         const { error: transactionError } = await supabase.from('transactions').insert({
             school_id: student.school_id,
             student_id: student.id,
             amount: amount,
             transaction_type: 'deposit',
-            items_json: { note: 'Manuel Bakiye Yükleme (Admin)' }
+            items_json: { note: 'Manuel Bakiye Yükleme (Admin)' },
+            previous_balance: previousBalance,
+            new_balance: finalNewBalance
         })
 
         if (transactionError) {

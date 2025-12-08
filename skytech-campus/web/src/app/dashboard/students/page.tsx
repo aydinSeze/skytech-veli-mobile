@@ -89,11 +89,17 @@ export default function StudentsPage() {
         const amount = parseFloat(depositAmount)
         if (amount <= 0) return alert('Geçersiz tutar!')
 
-        const newBalance = depositModal.student.wallet_balance + amount
+        const previousBalance = depositModal.student.wallet_balance || 0;
+        const newBalance = previousBalance + amount
 
         await supabase.from('students').update({ wallet_balance: newBalance }).eq('id', depositModal.student.id)
         await supabase.from('transactions').insert([{
-            student_id: depositModal.student.id, amount: amount, transaction_type: 'deposit', canteen_id: null
+            student_id: depositModal.student.id, 
+            amount: amount, 
+            transaction_type: 'deposit', 
+            canteen_id: null,
+            previous_balance: previousBalance,
+            new_balance: newBalance
         }])
 
         alert(`✅ ${amount} TL Yüklendi!\nGüncel Bakiye: ₺${newBalance}`)

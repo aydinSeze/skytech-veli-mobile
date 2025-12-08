@@ -18,7 +18,9 @@ export default function EtutMenuPage() {
 
     useEffect(() => {
         const fetchData = async () => {
-            // URL parametrelerini client-side'da oku
+            // URL parametrelerini client-side'da oku (server-safe)
+            if (typeof window === 'undefined') return
+            
             const urlParams = new URLSearchParams(window.location.search)
             const urlSchoolId = urlParams.get('schoolId')
             
@@ -33,7 +35,7 @@ export default function EtutMenuPage() {
             }
         }
         fetchData()
-    }, []) // URL parametreleri client-side'da okunuyor, dependency gerekmiyor
+    }, [])
 
     useEffect(() => {
         if (userSchoolId) {
@@ -71,26 +73,61 @@ export default function EtutMenuPage() {
             return
         }
 
-        const data = {
-            school_id: userSchoolId,
-            menu_date: selectedDate,
-            items_json: validItems,
-            is_active: true,
-            notification_sent: false
-        }
+        try {
+            const data = {
+                school_id: userSchoolId,
+                menu_date: selectedDate,
+                items_json: validItems, // JSON olarak kaydedilecek
+                is_active: true,
+                notification_sent: false
+            }
 
-        if (editingId) {
-            const { error } = await supabase.from('etut_menu').update(data).eq('id', editingId)
-            if (error) throw error
-        } else {
-            const { error } = await supabase.from('etut_menu').insert([data])
-            if (error) throw error
-        }
+            if (editingId) {
+                const { data: updateData, error } = await supabase.from('etut_menu').update(data).eq('id', editingId).select()
+                if (error) {
+                    console.error('Güncelleme hatası (DETAYLI):', {
+                        error,
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                        data: data
+                    })
+                    alert(`Hata: ${error.message || error.code || 'Menü güncellenemedi'}\n\nDetay: ${error.details || error.hint || 'Bilinmeyen hata'}`)
+                    return
+                }
+            } else {
+                const { data: insertData, error } = await supabase.from('etut_menu').insert([data]).select()
+                if (error) {
+                    console.error('Ekleme hatası (DETAYLI):', {
+                        error,
+                        message: error.message,
+                        code: error.code,
+                        details: error.details,
+                        hint: error.hint,
+                        data: data,
+                        userSchoolId: userSchoolId
+                    })
+                    alert(`Hata: ${error.message || error.code || 'Menü eklenemedi'}\n\nDetay: ${error.details || error.hint || 'Bilinmeyen hata'}\n\nKod: ${error.code || 'N/A'}`)
+                    return
+                }
+                
+                if (!insertData || insertData.length === 0) {
+                    alert('⚠️ Menü eklenemedi: Veritabanı yanıt vermedi. Lütfen SQL dosyasını çalıştırdığınızdan emin olun.')
+                    return
+                }
+            }
 
-        setIsModalOpen(false)
-        setEditingId(null)
-        setMenuItems([{ name: '', price: 0 }])
-        fetchMenus()
+            setIsModalOpen(false)
+            setEditingId(null)
+            setMenuItems([{ name: '', price: 0 }])
+            setSelectedDate(new Date().toISOString().split('T')[0])
+            await fetchMenus()
+            alert('✅ Menü başarıyla kaydedildi!')
+        } catch (error: any) {
+            console.error('Kaydetme hatası:', error)
+            alert(`Beklenmedik hata: ${error.message || 'Bilinmeyen hata'}`)
+        }
     }
 
     const handleEdit = (menu: any) => {

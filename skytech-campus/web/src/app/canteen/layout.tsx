@@ -22,10 +22,16 @@ export default function CanteenLayout({
     const [userRole, setUserRole] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
     const [currentDateTime, setCurrentDateTime] = useState<string>('')
+    const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0)
+    const [schoolId, setSchoolId] = useState<string | null>(null)
     
-    // URL'den schoolId parametresini al (yönetici için)
-    const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
-    const schoolId = urlParams.get('schoolId')
+    // URL'den schoolId parametresini al (yönetici için) - SERVER-SAFE
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search)
+            setSchoolId(urlParams.get('schoolId'))
+        }
+    }, [])
 
     const handleLogout = useCallback(async () => {
         await supabase.auth.signOut()
@@ -114,6 +120,102 @@ export default function CanteenLayout({
         checkAuthAndSchool()
     }, [pathname, supabase, handleLogout])
 
+    // BEKLEYEN SİPARİŞ SAYISINI ÇEK (REAL-TIME)
+    useEffect(() => {
+        const fetchPendingOrders = async () => {
+            try {
+                let targetSchoolId: string | null = null
+
+                if (schoolId) {
+                    targetSchoolId = schoolId
+                } else {
+                    const { data: { user } } = await supabase.auth.getUser()
+                    if (!user) return
+
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('school_id')
+                        .eq('id', user.id)
+                        .single()
+
+                    targetSchoolId = profile?.school_id || null
+                }
+
+                if (!targetSchoolId) return
+
+                // SADECE TESLİM EDİLMEMİŞ SİPARİŞLERİ SAY (completed hariç)
+                // Teslim edildikten sonra bildirim kalksın
+                const { data, error } = await supabase
+                    .from('orders')
+                    .select('id', { count: 'exact', head: false })
+                    .eq('school_id', targetSchoolId) // OKUL BAZLI İZOLASYON
+                    .in('order_type', ['mobile', 'etut']) // Hem mobil hem etüt siparişleri
+                    .neq('status', 'completed') // SADECE completed OLMAYANLAR (pending, preparing, ready)
+
+                if (!error && data) {
+                    setPendingOrdersCount(data.length || 0)
+                }
+            } catch (error) {
+                console.error('Bekleyen sipariş sayısı çekilirken hata:', error)
+            }
+        }
+
+        fetchPendingOrders()
+
+        // Real-time subscription - Hem mobil hem etüt siparişleri için
+        const setupSubscription = async () => {
+            let schoolIdForFilter: string | null = null
+
+            if (schoolId) {
+                schoolIdForFilter = schoolId
+            } else {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (!user) return null
+
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('school_id')
+                    .eq('id', user.id)
+                    .single()
+
+                schoolIdForFilter = profile?.school_id || null
+            }
+
+            if (!schoolIdForFilter) return null
+
+            const channel = supabase
+                .channel('pending-orders-count')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'orders',
+                        filter: `school_id=eq.${schoolIdForFilter}`
+                    },
+                    (payload) => {
+                        // Sadece mobil ve etüt siparişlerini dinle
+                        if (payload.new && (payload.new.order_type === 'mobile' || payload.new.order_type === 'etut')) {
+                            fetchPendingOrders()
+                        }
+                    }
+                )
+                .subscribe()
+
+            return () => {
+                supabase.removeChannel(channel)
+            }
+        }
+
+        const cleanupPromise = setupSubscription()
+        
+        return () => {
+            cleanupPromise.then(cleanup => {
+                if (cleanup) cleanup()
+            })
+        }
+    }, [schoolId, userRole, supabase])
+
     const getLinkClass = (path: string) => {
         const isActive = pathname === path
         const baseClass = "flex items-center gap-3 px-3 py-2 rounded transition-all duration-200 "
@@ -121,8 +223,9 @@ export default function CanteenLayout({
         return baseClass + "text-slate-400 hover:bg-slate-800 hover:text-white hover:translate-x-1"
     }
 
-    // Link'e schoolId parametresini ekle (yönetici için)
+    // Link'e schoolId parametresini ekle (yönetici için) - SERVER-SAFE
     const getLinkHref = (path: string) => {
+        // schoolId state'te varsa ekle (client-side'da set edilir)
         if (schoolId) {
             return `${path}?schoolId=${schoolId}`
         }
@@ -188,8 +291,19 @@ export default function CanteenLayout({
                     <Link href={getLinkHref("/canteen/suppliers")} className={getLinkClass('/canteen/suppliers')}>
                         <Truck size={20} /> <span>Firmalar</span>
                     </Link>
-                    <Link href={getLinkHref("/canteen/orders")} className={getLinkClass('/canteen/orders')}>
-                        <Package size={20} /> <span>Siparişler</span>
+                    <Link 
+                        href={getLinkHref("/canteen/orders")} 
+                        className={`${getLinkClass('/canteen/orders')} ${pendingOrdersCount > 0 ? 'bg-yellow-500/20 border-yellow-500/50' : ''}`}
+                    >
+                        <div className="relative">
+                            <Package size={20} />
+                            {pendingOrdersCount > 0 && (
+                                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
+                                    {pendingOrdersCount > 9 ? '9+' : pendingOrdersCount}
+                                </span>
+                            )}
+                        </div>
+                        <span className={pendingOrdersCount > 0 ? 'text-yellow-400 font-bold' : ''}>Siparişler</span>
                     </Link>
                     <Link href={getLinkHref("/canteen/etut-menu")} className={getLinkClass('/canteen/etut-menu')}>
                         <Calendar size={20} /> <span>Etüt Menüsü</span>

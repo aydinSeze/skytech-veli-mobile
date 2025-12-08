@@ -681,6 +681,61 @@ export default function StudentsPage() {
         }
     }
 
+    // TOPLU PDF İNDİR - Tüm Öğrencilerin Erişim Kodları
+    const handleDownloadAllAccessCodesPdf = () => {
+        if (filteredStudents.length === 0) {
+            alert('PDF oluşturmak için en az bir öğrenci olmalı.')
+            return
+        }
+
+        try {
+            const doc = new jsPDF()
+
+            const latinify = (str: string) => {
+                if (!str) return ''
+                const mapping: { [key: string]: string } = { 'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C' }
+                return str.split('').map(char => mapping[char] || char).join('')
+            }
+
+            doc.setFontSize(18)
+            doc.text(`${latinify(schoolName)} - Ogrenci Erisim Kodlari`, 14, 22)
+
+            doc.setFontSize(12)
+            doc.text(`Rapor Tarihi: ${new Date().toLocaleDateString('tr-TR')}`, 14, 32)
+            doc.text(`Toplam Ogrenci: ${filteredStudents.length}`, 14, 38)
+
+            const tableBody = filteredStudents.map((student, index) => [
+                (index + 1).toString(),
+                latinify(student.full_name || ''),
+                latinify(student.class_branch || ''),
+                student.access_code || 'YOK',
+                student.student_number || '-'
+            ])
+
+            autoTable(doc, {
+                startY: 44,
+                head: [['Sira', 'Ad Soyad', 'Sinif', 'Erisim Kodu', 'Ogrenci No']],
+                body: tableBody,
+                theme: 'grid',
+                headStyles: { fillColor: [41, 128, 185] },
+                styles: { fontSize: 9 },
+                columnStyles: {
+                    0: { cellWidth: 15 },
+                    1: { cellWidth: 60 },
+                    2: { cellWidth: 30 },
+                    3: { cellWidth: 40, fontStyle: 'bold' },
+                    4: { cellWidth: 35 }
+                }
+            })
+
+            doc.save(`${latinify(schoolName).replace(/\s+/g, '_')}_Erisim_Kodlari_${new Date().toISOString().split('T')[0]}.pdf`)
+
+        } catch (error) {
+            console.error('Toplu PDF hatası:', error)
+            alert('PDF oluşturulamadı.')
+        }
+    }
+
     // KART YAZDIR (PDF) - Öğrenci Kantin Kartı
     const handlePrintCard = (student: any) => {
         if (!student || !student.access_code) {
@@ -1004,20 +1059,30 @@ export default function StudentsPage() {
                 </div>
             </div>
 
-            {/* ARAMA */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-                <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <span className="text-slate-400">🔍</span>
+            {/* ARAMA VE PDF BUTONU */}
+            <div className="flex gap-4 mb-4">
+                <div className="flex-1 bg-slate-800 p-4 rounded-lg border border-slate-700">
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <span className="text-slate-400">🔍</span>
+                        </div>
+                        <input
+                            type="text"
+                            className="w-full bg-slate-900 text-white pl-10 p-3 rounded border border-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            placeholder="Öğrenci Ara (İsim, Şube, Kart ID, Veli)..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
                     </div>
-                    <input
-                        type="text"
-                        className="w-full bg-slate-900 text-white pl-10 p-3 rounded border border-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        placeholder="Öğrenci Ara (İsim, Şube, Kart ID, Veli)..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
                 </div>
+                <button
+                    onClick={handleDownloadAllAccessCodesPdf}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-colors"
+                    title="Tüm öğrencilerin erişim kodlarını PDF olarak indir"
+                >
+                    <FileText size={20} />
+                    Toplu PDF İndir
+                </button>
             </div>
 
             {/* LİSTE */}

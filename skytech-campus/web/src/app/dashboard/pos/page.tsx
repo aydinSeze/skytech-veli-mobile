@@ -111,7 +111,8 @@ export default function POSPage() {
             }
 
             const recordResult = await checkRecord(cartTotal)
-            const newBalance = student.wallet_balance - cartTotal
+            const previousBalance = student.wallet_balance || 0;
+            const newBalance = previousBalance - cartTotal
 
             // Bakiyeyi Düş
             await supabase.from('students').update({ wallet_balance: newBalance }).eq('id', student.id)
@@ -123,7 +124,13 @@ export default function POSPage() {
             }
 
             await supabase.from('transactions').insert([{
-                canteen_id: selectedCanteen, student_id: student.id, amount: cartTotal, transaction_type: 'purchase', items_json: cart
+                canteen_id: selectedCanteen, 
+                student_id: student.id, 
+                amount: -cartTotal, 
+                transaction_type: 'purchase', 
+                items_json: cart,
+                previous_balance: previousBalance,
+                new_balance: newBalance
             }])
 
             if (recordResult && recordResult.isRecord) {

@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
     Plus, Search, School as SchoolIcon, MapPin, Users, Key,
-    Edit2, Trash2, X, Check, Copy, Power, DollarSign, Wallet, Minus, ChevronDown, ChevronUp, Building2
+    Edit2, Trash2, X, Check, Copy, Power, DollarSign, Wallet, Minus, ChevronDown, ChevronUp, Building2,
+    Download, Upload
 } from 'lucide-react'
 import { addSchoolCredit } from '@/actions/school-actions'
 
@@ -56,6 +57,10 @@ export default function SchoolsPage() {
     const [selectedSchool, setSelectedSchool] = useState<School | null>(null)
     const [creditAmount, setCreditAmount] = useState('')
     const [creditOperation, setCreditOperation] = useState<'add' | 'subtract'>('add')
+
+    // Yedekleme/Geri Yükleme
+    const [isBackupLoading, setIsBackupLoading] = useState(false)
+    const [isRestoreLoading, setIsRestoreLoading] = useState(false)
 
     const [formData, setFormData] = useState<SchoolFormData>({
         name: '',
@@ -314,6 +319,235 @@ export default function SchoolsPage() {
         }
     }
 
+    // YEDEKLEME FONKSİYONU (7 GÜNLÜK SİSTEM)
+    const handleBackup = async (school: School) => {
+        if (!confirm(`${school.name} okulunun tüm verilerini yedeklemek istediğinize emin misiniz?`)) return
+
+        setIsBackupLoading(true)
+        try {
+            // Tüm okula ait verileri çek
+            const [students, transactions, products, orders, personnel, etutMenus, canteens, suppliers, expenses] = await Promise.all([
+                supabase.from('students').select('*').eq('school_id', school.id),
+                supabase.from('transactions').select('*').eq('school_id', school.id),
+                supabase.from('products').select('*').eq('school_id', school.id),
+                supabase.from('orders').select('*').eq('school_id', school.id),
+                supabase.from('school_personnel').select('*').eq('school_id', school.id),
+                supabase.from('etut_menu').select('*').eq('school_id', school.id),
+                supabase.from('canteens').select('*').eq('school_id', school.id),
+                supabase.from('suppliers').select('*').eq('school_id', school.id),
+                supabase.from('expenses').select('*').eq('school_id', school.id)
+            ])
+
+            // Okul bilgilerini al
+            const { data: schoolData } = await supabase.from('schools').select('*').eq('id', school.id).single()
+
+            // Yedekleme objesi oluştur
+            const backupData = {
+                version: '1.0',
+                exportDate: new Date().toISOString(),
+                school: schoolData,
+                students: students.data || [],
+                transactions: transactions.data || [],
+                products: products.data || [],
+                orders: orders.data || [],
+                personnel: personnel.data || [],
+                etutMenus: etutMenus.data || [],
+                canteens: canteens.data || [],
+                suppliers: suppliers.data || [],
+                expenses: expenses.data || []
+            }
+
+            // Veritabanına kaydet (7 günlük yedekleme)
+            const fileName = `okul_yedek_${school.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.json`
+            const { data: { user } } = await supabase.auth.getUser()
+            
+            const { error: backupError } = await supabase
+                .from('school_backups')
+                .insert({
+                    school_id: school.id,
+                    backup_data: backupData,
+                    file_name: fileName,
+                    created_by: user?.id || null
+                })
+
+            if (backupError) {
+                console.error('Yedekleme kayıt hatası:', backupError)
+                // Hata olsa bile dosya indirmeye devam et
+            }
+
+            // JSON dosyası olarak indir
+            const jsonStr = JSON.stringify(backupData, null, 2)
+            const blob = new Blob([jsonStr], { type: 'application/json' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = fileName
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+
+            // 7 günden eski yedeklemeleri temizle
+            await supabase.rpc('cleanup_old_backups')
+
+            alert('✅ Yedekleme başarıyla tamamlandı ve 7 günlük arşive kaydedildi!')
+        } catch (error) {
+            console.error('Yedekleme hatası:', error)
+            alert('❌ Yedekleme sırasında bir hata oluştu: ' + (error as Error).message)
+        } finally {
+            setIsBackupLoading(false)
+        }
+    }
+
+    // GERİ YÜKLEME FONKSİYONU (Dosya veya Veritabanından)
+    const handleRestore = async (school: School) => {
+        // Önce veritabanındaki son 7 günlük yedeklemeleri göster
+        const { data: backups } = await supabase
+            .from('school_backups')
+            .select('*')
+            .eq('school_id', school.id)
+            .order('backup_date', { ascending: false })
+            .limit(10)
+
+        if (backups && backups.length > 0) {
+            const backupOptions = backups.map((b, idx) => {
+                const date = new Date(b.backup_date)
+                return `${idx + 1}. ${date.toLocaleString('tr-TR')} - ${b.file_name || 'Yedekleme'}`
+            }).join('\n')
+
+            const choice = prompt(
+                `⚠️ UYARI: ${school.name} okulunun TÜM MEVCUT VERİLERİ SİLİNECEK!\n\n` +
+                `Son 7 günlük yedeklemeler:\n${backupOptions}\n\n` +
+                `Bir yedekleme seçmek için numarasını girin (1-${backups.length}),\n` +
+                `veya JSON dosyası yüklemek için "dosya" yazın:`
+            )
+
+            if (!choice) return
+
+            if (choice.toLowerCase() === 'dosya') {
+                // Dosya seçici
+                const input = document.createElement('input')
+                input.type = 'file'
+                input.accept = '.json'
+                input.onchange = async (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0]
+                    if (!file) return
+                    await restoreFromFile(file, school)
+                }
+                input.click()
+            } else {
+                // Veritabanından seçilen yedeklemeyi geri yükle
+                const selectedIndex = parseInt(choice) - 1
+                if (selectedIndex >= 0 && selectedIndex < backups.length) {
+                    await restoreFromBackup(backups[selectedIndex], school)
+                } else {
+                    alert('❌ Geçersiz seçim!')
+                }
+            }
+        } else {
+            // Yedekleme yoksa sadece dosya seçici
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = '.json'
+            input.onchange = async (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0]
+                if (!file) return
+                await restoreFromFile(file, school)
+            }
+            input.click()
+        }
+    }
+
+    // Dosyadan geri yükleme
+    const restoreFromFile = async (file: File, school: School) => {
+        setIsRestoreLoading(true)
+        try {
+            const text = await file.text()
+            const backupData = JSON.parse(text)
+            await performRestore(backupData, school)
+        } catch (error) {
+            console.error('Geri yükleme hatası:', error)
+            alert('❌ Geri yükleme sırasında bir hata oluştu: ' + (error as Error).message)
+        } finally {
+            setIsRestoreLoading(false)
+        }
+    }
+
+    // Veritabanından geri yükleme
+    const restoreFromBackup = async (backup: any, school: School) => {
+        setIsRestoreLoading(true)
+        try {
+            const backupData = backup.backup_data
+            await performRestore(backupData, school)
+        } catch (error) {
+            console.error('Geri yükleme hatası:', error)
+            alert('❌ Geri yükleme sırasında bir hata oluştu: ' + (error as Error).message)
+        } finally {
+            setIsRestoreLoading(false)
+        }
+    }
+
+    // Geri yükleme işlemini gerçekleştir
+    const performRestore = async (backupData: any, school: School) => {
+        // Okul ID kontrolü
+        if (backupData.school?.id !== school.id) {
+            alert('❌ Bu yedek dosyası bu okula ait değil!')
+            return
+        }
+
+        // ÖNCE MEVCUT VERİLERİ SİL
+        await Promise.all([
+            supabase.from('expenses').delete().eq('school_id', school.id),
+            supabase.from('suppliers').delete().eq('school_id', school.id),
+            supabase.from('canteens').delete().eq('school_id', school.id),
+            supabase.from('etut_menu').delete().eq('school_id', school.id),
+            supabase.from('school_personnel').delete().eq('school_id', school.id),
+            supabase.from('orders').delete().eq('school_id', school.id),
+            supabase.from('products').delete().eq('school_id', school.id),
+            supabase.from('transactions').delete().eq('school_id', school.id),
+            supabase.from('students').delete().eq('school_id', school.id)
+        ])
+
+        // SONRA VERİLERİ GERİ YÜKLE
+        if (backupData.students?.length > 0) {
+            await supabase.from('students').insert(backupData.students)
+        }
+        if (backupData.transactions?.length > 0) {
+            await supabase.from('transactions').insert(backupData.transactions)
+        }
+        if (backupData.products?.length > 0) {
+            await supabase.from('products').insert(backupData.products)
+        }
+        if (backupData.orders?.length > 0) {
+            await supabase.from('orders').insert(backupData.orders)
+        }
+        if (backupData.personnel?.length > 0) {
+            await supabase.from('school_personnel').insert(backupData.personnel)
+        }
+        if (backupData.etutMenus?.length > 0) {
+            await supabase.from('etut_menu').insert(backupData.etutMenus)
+        }
+        if (backupData.canteens?.length > 0) {
+            await supabase.from('canteens').insert(backupData.canteens)
+        }
+        if (backupData.suppliers?.length > 0) {
+            await supabase.from('suppliers').insert(backupData.suppliers)
+        }
+        if (backupData.expenses?.length > 0) {
+            await supabase.from('expenses').insert(backupData.expenses)
+        }
+
+        // Okul bilgilerini güncelle (sistem_credit hariç - güvenlik için)
+        if (backupData.school) {
+            const { system_credit, ...schoolUpdateData } = backupData.school
+            await supabase.from('schools').update(schoolUpdateData).eq('id', school.id)
+        }
+
+        alert('✅ Geri yükleme başarıyla tamamlandı!')
+        await fetchSchools()
+        router.refresh()
+    }
+
     const filteredSchools = schools.filter(school =>
         school.name.toLowerCase().includes(searchTerm.toLowerCase())
     )
@@ -392,6 +626,20 @@ export default function SchoolsPage() {
                                     </div>
 
                                     <div className="flex items-center gap-2">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleBackup(school); }}
+                                            disabled={isBackupLoading}
+                                            className="p-2 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg transition-colors relative z-20 disabled:opacity-50"
+                                            title="Yedekle (Download JSON)">
+                                            <Download size={20} />
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleRestore(school); }}
+                                            disabled={isRestoreLoading}
+                                            className="p-2 bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white rounded-lg transition-colors relative z-20 disabled:opacity-50"
+                                            title="Geri Yükle (Restore JSON)">
+                                            <Upload size={20} />
+                                        </button>
                                         <button onClick={(e) => { e.stopPropagation(); openCreditModal(school); }}
                                             className="p-2 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white rounded-lg transition-colors relative z-20"
                                             title="Kredi Yükle">

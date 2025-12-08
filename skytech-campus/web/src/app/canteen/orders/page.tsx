@@ -1,10 +1,12 @@
 'use client'
 
 import { createClient } from '@/utils/supabase/client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Truck, Package, ArrowRight, Smartphone, CheckCircle, Clock, XCircle } from 'lucide-react'
+import { Truck, Package, ArrowRight, Smartphone, CheckCircle, Clock, XCircle, ScanBarcode, X, Download } from 'lucide-react'
 import Link from 'next/link'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +18,205 @@ export default function OrdersPage() {
     const [loading, setLoading] = useState(true)
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
     const [activeTab, setActiveTab] = useState<'suppliers' | 'mobile'>('mobile')
+    
+    // Direkt Teslim Etme İşlemi (Kart Okutma Modalı Kaldırıldı)
+    const handleDirectDelivery = async (order: any) => {
+        if (!confirm(`Siparişi teslim etmek istediğinize emin misiniz?\n\nÖğrenci: ${order.students?.full_name || 'Bilinmiyor'}\nToplam: ₺${order.total_amount.toFixed(2)}`)) {
+            return;
+        }
+
+        try {
+            // Siparişin öğrencisini bul
+            const { data: studentData, error: studentError } = await supabase
+                .from('students')
+                .select('id, full_name, wallet_balance, access_code, student_number')
+                .eq('id', order.student_id)
+                .eq('school_id', userSchoolId)
+                .single();
+
+            if (studentError || !studentData) {
+                alert('❌ Öğrenci bulunamadı!')
+                return
+            }
+
+            // Bakiyeyi kontrol et
+            const previousBalance = studentData.wallet_balance || 0;
+            const newBalance = previousBalance - order.total_amount;
+            
+            if (newBalance < 0) {
+                alert(`⚠️ Öğrencinin bakiyesi yetersiz!\nMevcut: ₺${previousBalance.toFixed(2)}\nGerekli: ₺${order.total_amount.toFixed(2)}`)
+                return
+            }
+
+            // STOK GÜNCELLEME - Siparişteki ürünleri stoktan düş
+            if (order.items_json && Array.isArray(order.items_json)) {
+                for (const item of order.items_json) {
+                    if (item.product_id) {
+                        // Ürün ID'si varsa stoktan düş
+                        const { data: product } = await supabase
+                            .from('products')
+                            .select('stock_quantity')
+                            .eq('id', item.product_id)
+                            .eq('school_id', userSchoolId) // OKUL BAZLI İZOLASYON
+                            .single();
+                        
+                        if (product) {
+                            const newStock = (product.stock_quantity || 0) - (item.quantity || 1);
+                            await supabase
+                                .from('products')
+                                .update({ stock_quantity: Math.max(0, newStock) })
+                                .eq('id', item.product_id)
+                                .eq('school_id', userSchoolId); // OKUL BAZLI İZOLASYON
+                        }
+                    } else if (item.name) {
+                        // Ürün ID yoksa isimle bul
+                        const { data: products } = await supabase
+                            .from('products')
+                            .select('id, stock_quantity')
+                            .eq('name', item.name)
+                            .eq('school_id', order.school_id) // OKUL BAZLI İZOLASYON
+                            .limit(1);
+                        
+                        if (products && products.length > 0) {
+                            const product = products[0];
+                            const newStock = (product.stock_quantity || 0) - (item.quantity || 1);
+                            await supabase
+                                .from('products')
+                                .update({ stock_quantity: Math.max(0, newStock) })
+                                .eq('id', product.id)
+                                .eq('school_id', order.school_id); // OKUL BAZLI İZOLASYON
+                        }
+                    }
+                }
+            }
+
+            // MUHASEBE KAYDI - Transaction oluştur (bakiye bilgileri ile)
+            const transactionItems = Array.isArray(order.items_json) 
+                ? order.items_json.map((item: any) => ({
+                    ...item,
+                    source: 'MOBİL_SİPARİŞ'
+                }))
+                : order.items_json;
+            
+            await supabase.from('transactions').insert({
+                student_id: studentData.id,
+                school_id: order.school_id, // OKUL BAZLI İZOLASYON
+                transaction_type: 'purchase',
+                amount: -order.total_amount,
+                items_json: {
+                    items: transactionItems,
+                    order_id: order.id,
+                    source: 'MOBİL_SİPARİŞ',
+                    note: 'Mobil Sipariş Teslimi'
+                },
+                order_id: order.id,
+                previous_balance: previousBalance,
+                new_balance: newBalance
+            })
+
+            // Bakiyeyi güncelle
+            await supabase
+                .from('students')
+                .update({ wallet_balance: newBalance })
+                .eq('id', studentData.id)
+                .eq('school_id', userSchoolId) // OKUL BAZLI İZOLASYON
+
+            // Siparişi tamamla
+            await supabase
+                .from('orders')
+                .update({ 
+                    status: 'completed', 
+                    completed_at: new Date().toISOString(),
+                    payment_status: 'completed'
+                })
+                .eq('id', order.id)
+                .eq('school_id', userSchoolId) // OKUL BAZLI İZOLASYON
+
+            alert(`✅ Sipariş teslim edildi!\nÖğrenci: ${studentData.full_name}\nKalan Bakiye: ₺${newBalance.toFixed(2)}`)
+
+            fetchData()
+        } catch (error: any) {
+            console.error('Teslim hatası:', error)
+            alert('❌ Hata: ' + (error.message || 'Bilinmeyen hata'))
+        }
+    }
+
+    // PDF İndirme Fonksiyonu - Bugünkü ve Teslim Edilen Siparişler
+    const handleDownloadPDF = async (period: 'daily' | 'weekly' | 'monthly') => {
+        try {
+            const now = new Date();
+            let startDate: Date;
+            let periodName: string;
+
+            if (period === 'daily') {
+                // Bugünün başlangıcı
+                startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                periodName = 'Gunluk';
+            } else if (period === 'weekly') {
+                startDate = new Date(now);
+                startDate.setDate(now.getDate() - 7);
+                periodName = 'Haftalik';
+            } else {
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                periodName = 'Aylik';
+            }
+
+            // Bugünkü siparişleri ve teslim edilen siparişleri çek (OKUL BAZLI İZOLASYON)
+            const { data: orders, error } = await supabase
+                .from('orders')
+                .select(`
+                    *,
+                    students(full_name, student_number)
+                `)
+                .eq('school_id', userSchoolId) // OKUL BAZLI İZOLASYON
+                .in('order_type', ['mobile', 'etut'])
+                .gte('created_at', startDate.toISOString())
+                .in('status', ['completed', 'ready', 'preparing', 'pending']) // Tüm durumlar ama öncelikle completed
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            // PDF oluştur
+            const doc = new jsPDF();
+            
+            // Başlık
+            doc.setFontSize(18);
+            doc.text('Siparisler Raporu', 14, 20);
+            
+            doc.setFontSize(12);
+            doc.text(`Donem: ${periodName}`, 14, 30);
+            doc.text(`Tarih: ${now.toLocaleDateString('tr-TR')}`, 14, 36);
+            doc.text(`Toplam Siparis: ${orders?.length || 0}`, 14, 42);
+
+            // Tablo verileri
+            const tableData = (orders || []).map((order: any) => [
+                order.students?.full_name || 'Bilinmiyor',
+                order.students?.student_number || '-',
+                new Date(order.created_at).toLocaleDateString('tr-TR'),
+                new Date(order.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                order.status === 'completed' ? 'Tamamlandi' : 
+                order.status === 'ready' ? 'Hazir' :
+                order.status === 'preparing' ? 'Hazirlaniyor' : 'Beklemede',
+                `₺${order.total_amount.toFixed(2)}`
+            ]);
+
+            autoTable(doc, {
+                startY: 50,
+                head: [['Ogrenci', 'Ogrenci No', 'Tarih', 'Saat', 'Durum', 'Toplam']],
+                body: tableData,
+                theme: 'striped',
+                headStyles: { fillColor: [59, 130, 246] },
+                styles: { fontSize: 9 }
+            });
+
+            // Dosya adı
+            const fileName = `Siparisler_${periodName}_${now.toISOString().split('T')[0]}.pdf`;
+            doc.save(fileName);
+        } catch (error: any) {
+            console.error('PDF indirme hatası:', error);
+            alert('PDF indirilirken hata oluştu: ' + (error.message || 'Bilinmeyen hata'));
+        }
+    }
 
     const fetchData = async () => {
         try {
@@ -62,7 +263,7 @@ export default function OrdersPage() {
                 supabase.from('orders')
                     .select('*, students(full_name)')
                     .eq('school_id', targetSchoolId)
-                    .eq('order_type', 'mobile')
+                    .in('order_type', ['mobile', 'etut']) // Hem mobil hem etüt siparişleri
                     .order('created_at', { ascending: false })
                     .limit(50)
             ])
@@ -95,27 +296,39 @@ export default function OrdersPage() {
             </div>
 
             {/* SEKMELER */}
-            <div className="flex gap-4 border-b border-slate-800">
-                <button
-                    onClick={() => setActiveTab('mobile')}
-                    className={`pb-3 px-4 font-medium transition-colors relative ${activeTab === 'mobile' ? 'text-orange-400' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    <div className="flex items-center gap-2">
-                        <Smartphone size={18} />
-                        Mobil Siparişler ({mobileOrders.length})
-                    </div>
-                    {activeTab === 'mobile' && <div className="absolute bottom-0 left-0 w-full h-1 bg-orange-500 rounded-t-full"></div>}
-                </button>
-                <button
-                    onClick={() => setActiveTab('suppliers')}
-                    className={`pb-3 px-4 font-medium transition-colors relative ${activeTab === 'suppliers' ? 'text-orange-400' : 'text-slate-500 hover:text-slate-300'}`}
-                >
-                    <div className="flex items-center gap-2">
-                        <Truck size={18} />
-                        Tedarikçi Siparişleri
-                    </div>
-                    {activeTab === 'suppliers' && <div className="absolute bottom-0 left-0 w-full h-1 bg-orange-500 rounded-t-full"></div>}
-                </button>
+            <div className="flex gap-4 border-b border-slate-800 items-center justify-between">
+                <div className="flex gap-4">
+                    <button
+                        onClick={() => setActiveTab('mobile')}
+                        className={`pb-3 px-4 font-medium transition-colors relative ${activeTab === 'mobile' ? 'text-orange-400' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <Smartphone size={18} />
+                            Mobil & Etüt Siparişleri ({mobileOrders.length})
+                        </div>
+                        {activeTab === 'mobile' && <div className="absolute bottom-0 left-0 w-full h-1 bg-orange-500 rounded-t-full"></div>}
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('suppliers')}
+                        className={`pb-3 px-4 font-medium transition-colors relative ${activeTab === 'suppliers' ? 'text-orange-400' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <Truck size={18} />
+                            Tedarikçi Siparişleri
+                        </div>
+                        {activeTab === 'suppliers' && <div className="absolute bottom-0 left-0 w-full h-1 bg-orange-500 rounded-t-full"></div>}
+                    </button>
+                </div>
+                {/* PDF İndirme Butonu - Sadece Mobil sekmesinde görünsün */}
+                {activeTab === 'mobile' && (
+                    <button
+                        onClick={() => handleDownloadPDF('daily')}
+                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"
+                    >
+                        <Download size={16} />
+                        Bugünkü Siparişleri PDF İndir
+                    </button>
+                )}
             </div>
 
             {/* MOBİL SİPARİŞLER */}
@@ -184,15 +397,33 @@ export default function OrdersPage() {
                                     )}
                                     {order.status === 'ready' && (
                                         <button
-                                            onClick={async () => {
-                                                await supabase.from('orders').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', order.id)
-                                                fetchData()
-                                            }}
+                                            onClick={() => handleDirectDelivery(order)}
                                             className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-bold"
                                         >
-                                            Tamamla
+                                            Teslim Et
                                         </button>
                                     )}
+                                    {/* Sipariş Silme Butonu - Tüm durumlar için */}
+                                    <button
+                                        onClick={async () => {
+                                            if (confirm(`Bu siparişi silmek istediğinize emin misiniz?\n\nÖğrenci: ${order.students?.full_name || 'Bilinmiyor'}\nToplam: ₺${order.total_amount.toFixed(2)}`)) {
+                                                const { error } = await supabase
+                                                    .from('orders')
+                                                    .delete()
+                                                    .eq('id', order.id)
+                                                
+                                                if (error) {
+                                                    alert(`Sipariş silinirken hata oluştu: ${error.message}`)
+                                                } else {
+                                                    fetchData()
+                                                }
+                                            }
+                                        }}
+                                        className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-xs font-bold"
+                                        title="Siparişi Sil"
+                                    >
+                                        🗑️ Sil
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -268,8 +499,9 @@ export default function OrdersPage() {
                     </Link>
                     </div>
                 )}
-            </div>
+                </div>
             )}
+
         </div>
     )
 }
