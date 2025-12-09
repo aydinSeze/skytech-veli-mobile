@@ -10,12 +10,13 @@ import {
   Animated,
   Image,
   Linking,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../lib/supabase';
 import { useStudent } from '../../context/StudentContext';
-import { Wallet, Coffee, Trophy, ArrowRight } from 'lucide-react-native';
+import { Wallet, Coffee, Trophy, ArrowRight, Utensils } from 'lucide-react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import React from 'react';
 
@@ -43,6 +44,9 @@ export default function HomeScreen() {
   const [borderWidthAnim] = useState(new Animated.Value(3)); // Border kalınlığı animasyonu
   const [eventNotificationCount, setEventNotificationCount] = useState<number>(0);
   const [activeAnnouncement, setActiveAnnouncement] = useState<any>(null);
+  const [readyOrders, setReadyOrders] = useState<any[]>([]); // Hazır siparişler
+  const [expandedReadyOrders, setExpandedReadyOrders] = useState(false); // Accordion durumu
+  const [activeOrders, setActiveOrders] = useState<any[]>([]); // Aktif siparişler (pending, preparing, ready)
   const router = useRouter();
 
   const fetchBalance = async () => {
@@ -88,6 +92,50 @@ export default function HomeScreen() {
       setRecentTransactions(data || []);
     } catch (error) {
       console.error('İşlem geçmişi çekme hatası:', error);
+    }
+  };
+
+  const fetchReadyOrders = async () => {
+    if (!student?.id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('student_id', student.id)
+        .eq('status', 'ready')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setReadyOrders(data || []);
+    } catch (error) {
+      console.error('Hazır siparişler çekme hatası:', error);
+    }
+  };
+
+  // Aktif siparişleri çek (pending, preparing, ready) - OKUL BAZLI İZOLASYON
+  const fetchActiveOrders = async () => {
+    if (!student?.id || !student?.school_id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('student_id', student.id)
+        .eq('school_id', student.school_id) // OKUL BAZLI İZOLASYON
+        .in('status', ['pending', 'preparing', 'ready'])
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Aktif siparişler çekme hatası:', error);
+        setActiveOrders([]);
+        return;
+      }
+      
+      setActiveOrders(data || []);
+    } catch (error) {
+      console.error('Aktif siparişler çekme hatası:', error);
+      setActiveOrders([]);
     }
   };
 
@@ -219,9 +267,18 @@ export default function HomeScreen() {
             event: '*',
             schema: 'public',
             table: 'announcements',
+            filter: 'display_location=eq.ana_sayfa',
           },
-          () => {
+          (payload) => {
             fetchActiveAnnouncement();
+            
+            // Yeni kampanya/haber eklendiğinde bildirim
+            if (payload.eventType === 'INSERT' || (payload.eventType === 'UPDATE' && payload.new.is_active)) {
+              Alert.alert(
+                '🎉 Yeni Etkinlik!',
+                'SkyTech\'ten yeni bir etkinlik duyurusu var! Ana sayfadaki kartı kontrol edin.'
+              );
+            }
           }
         )
         .subscribe();
@@ -255,6 +312,8 @@ export default function HomeScreen() {
     logAppUsage();
     fetchBalance();
     fetchRecentTransactions();
+    fetchReadyOrders();
+    fetchActiveOrders();
 
     // CANLI BAKİYE GÜNCELLEMESİ - Real-time subscription
     const balanceChannel = supabase
@@ -292,10 +351,67 @@ export default function HomeScreen() {
           table: 'transactions',
           filter: `student_id=eq.${student.id}`,
         },
-        () => {
+        (payload) => {
           // Yeni işlem geldi, listeyi yenile
           fetchRecentTransactions();
           fetchBalance();
+          
+          // Bildirim göster
+          if (payload.eventType === 'INSERT') {
+            const transaction = payload.new;
+            if (transaction.transaction_type === 'deposit') {
+              // Bakiye yüklendi bildirimi
+              Alert.alert(
+                '💰 Bakiye Yüklendi',
+                `Bakiyenize ₺${Math.abs(transaction.amount).toFixed(2)} yüklendi!`
+              );
+            } else if (transaction.transaction_type === 'purchase') {
+              // Ürün alındı bildirimi
+              Alert.alert(
+                '🛒 Sipariş Tamamlandı',
+                `Siparişiniz teslim edildi. ₺${Math.abs(transaction.amount).toFixed(2)} bakiyenizden düşüldü.`
+              );
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'orders',
+          filter: `student_id=eq.${student.id}`,
+        },
+        (payload) => {
+          // Sipariş durumu değişti
+          const order = payload.new;
+          if (order.status === 'preparing') {
+            Alert.alert('👨‍🍳 Siparişiniz Hazırlanıyor', 'Siparişiniz hazırlanmaya başlandı!');
+            fetchReadyOrders(); // Hazır siparişler listesini güncelle
+          } else if (order.status === 'ready') {
+            Alert.alert('✅ Siparişiniz Hazır', 'Siparişiniz hazır! Lütfen kantinden alınız.');
+            fetchReadyOrders(); // Hazır siparişler listesini güncelle
+          } else if (order.status === 'completed') {
+            // Sipariş teslim edildi, hazır siparişler listesinden çıkar
+            fetchReadyOrders(); // Hazır siparişler listesini güncelle (artık ready değil, completed)
+          }
+          fetchRecentTransactions();
+          fetchActiveOrders(); // Aktif siparişler listesini güncelle
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `student_id=eq.${student.id}`,
+        },
+        () => {
+          // Herhangi bir değişiklikte hazır siparişler ve aktif siparişler listesini güncelle
+          fetchReadyOrders();
+          fetchActiveOrders();
         }
       )
       .subscribe();
@@ -348,12 +464,14 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
         }
+        showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -391,7 +509,20 @@ export default function HomeScreen() {
               <Text style={styles.quickActionTitle}>Kantin Menüsü</Text>
             </TouchableOpacity>
 
-            {/* SkyTech Ödüllü Etkinliklerimiz - Dinamik Kampanya Kartı */}
+            {/* Etüt Yemekleri */}
+            <TouchableOpacity
+              style={styles.quickActionCard}
+              onPress={() => router.push('/etut-menu')}
+            >
+              <View style={[styles.iconContainer, { backgroundColor: '#10b98120' }]}>
+                <Utensils size={28} color="#10b981" />
+              </View>
+              <Text style={styles.quickActionTitle}>Etüt Yemekleri</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* SkyTech Ödüllü Etkinliklerimiz - Dinamik Kampanya Kartı */}
+          <View style={{ marginTop: 12 }}>
             <Animated.View 
               style={[
                 styles.promoCardWrapper,
@@ -489,41 +620,148 @@ export default function HomeScreen() {
               </Animated.View>
             </Animated.View>
           </View>
-        </View>
 
-        {/* Son İşlemler */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Son İşlemler</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/orders')}>
-              <Text style={styles.seeAllText}>Tümünü Gör</Text>
-            </TouchableOpacity>
-          </View>
-          
-          {recentTransactions.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>Henüz işlem yok</Text>
-            </View>
-          ) : (
-            <View style={styles.transactionsList}>
-              {recentTransactions.slice(0, 3).map((transaction) => (
-                <View key={transaction.id} style={styles.transactionCard}>
-                  <View style={styles.transactionInfo}>
-                    <Text style={styles.transactionDate}>
-                      {formatDate(transaction.created_at)}
-                    </Text>
-                    <Text style={styles.transactionItems}>
-                      {formatTransactionItems(transaction.items_json)}
+          {/* SİPARİŞ TAKİP KARTI - Kampanya Kartının Hemen Altında */}
+          <View style={{ marginTop: 12 }}>
+            {activeOrders.length > 0 ? (
+              activeOrders.map((order) => {
+                const isReady = order.status === 'ready';
+                const statusText = order.status === 'ready' ? 'Hazır' : 
+                                  order.status === 'preparing' ? 'Hazırlanıyor' : 
+                                  'Beklemede';
+                
+                // Ürün adlarını formatla
+                let itemsText = 'Sipariş';
+                if (order.items_json && Array.isArray(order.items_json)) {
+                  itemsText = order.items_json
+                    .map((item: any) => {
+                      const qty = item.quantity || 0;
+                      const name = item.name || 'Ürün';
+                      return `${qty}x ${name}`;
+                    })
+                    .join(', ');
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={order.id}
+                    style={[
+                      styles.orderTrackingCard,
+                      isReady && styles.orderTrackingCardReady
+                    ]}
+                    onPress={() => router.push('/(tabs)/orders')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.orderTrackingHeader}>
+                      <View style={styles.orderTrackingIconContainer}>
+                        <Text style={styles.orderTrackingIcon}>
+                          {isReady ? '✅' : order.status === 'preparing' ? '👨‍🍳' : '⏳'}
+                        </Text>
+                      </View>
+                      <View style={styles.orderTrackingInfo}>
+                        <Text style={styles.orderTrackingTitle}>Sipariş Takibi</Text>
+                        <Text style={styles.orderTrackingOrderNumber}>
+                          Sipariş #{order.id.slice(0, 8)}
+                        </Text>
+                      </View>
+                      <View style={[
+                        styles.orderTrackingStatusBadge,
+                        isReady && styles.orderTrackingStatusBadgeReady
+                      ]}>
+                        <Text style={[
+                          styles.orderTrackingStatusText,
+                          isReady && styles.orderTrackingStatusTextReady
+                        ]}>
+                          {statusText}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.orderTrackingDetails}>
+                      <Text style={styles.orderTrackingItems} numberOfLines={2}>
+                        {itemsText}
+                      </Text>
+                      <Text style={styles.orderTrackingAmount}>
+                        ₺{Number(order.total_amount || 0).toFixed(2)}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              // Aktif sipariş yoksa bilgi kartı göster
+              <View style={styles.orderTrackingCardEmpty}>
+                <View style={styles.orderTrackingHeader}>
+                  <View style={styles.orderTrackingIconContainer}>
+                    <Text style={styles.orderTrackingIcon}>📦</Text>
+                  </View>
+                  <View style={styles.orderTrackingInfo}>
+                    <Text style={styles.orderTrackingTitle}>Sipariş Takibi</Text>
+                    <Text style={styles.orderTrackingOrderNumber}>
+                      Aktif siparişiniz bulunmuyor
                     </Text>
                   </View>
-                  <Text style={[
-                    styles.transactionAmount,
-                    { color: transaction.transaction_type === 'deposit' ? '#10b981' : '#ef4444' }
-                  ]}>
-                    {transaction.transaction_type === 'deposit' ? '+' : '-'}₺{transaction.amount.toFixed(2)}
+                </View>
+                <View style={styles.orderTrackingDetails}>
+                  <Text style={styles.orderTrackingItemsEmpty}>
+                    Henüz bir sipariş vermediniz veya tüm siparişleriniz tamamlandı.
                   </Text>
                 </View>
-              ))}
+              </View>
+            )}
+          </View>
+
+          {/* Sipariş Hazır Kartı - Kampanya Kartının Hemen Altında */}
+          {readyOrders.length > 0 && (
+            <View style={{ marginTop: 12 }}>
+              <View style={styles.readyOrderCard}>
+                {/* Başlık - Tıklanabilir */}
+                <TouchableOpacity
+                  style={styles.readyOrderHeader}
+                  onPress={() => setExpandedReadyOrders(!expandedReadyOrders)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.readyOrderIconContainer}>
+                    <Text style={styles.readyOrderIcon}>✅</Text>
+                  </View>
+                  <View style={styles.readyOrderInfo}>
+                    <Text style={styles.readyOrderTitle}>Hazır Olan Siparişler</Text>
+                    <Text style={styles.readyOrderSubtitle}>
+                      {String(readyOrders.length)} siparişiniz kantinde hazır bekliyor
+                    </Text>
+                  </View>
+                  <Text style={styles.expandIcon}>{expandedReadyOrders ? '▼' : '▶'}</Text>
+                </TouchableOpacity>
+                
+                {/* Detaylar - Accordion */}
+                {expandedReadyOrders && (
+                  <View style={styles.readyOrderDetails}>
+                    {readyOrders.map((order) => {
+                      let itemsText = 'Sipariş';
+                      if (order.items_json && Array.isArray(order.items_json)) {
+                        itemsText = order.items_json
+                          .map((item: any) => {
+                            const qty = item.quantity || 0;
+                            const name = item.name || 'Ürün';
+                            return `${qty}x ${name}`;
+                          })
+                          .join(', ');
+                      }
+                      return (
+                        <TouchableOpacity
+                          key={order.id}
+                          style={styles.readyOrderItem}
+                          onPress={() => router.push('/(tabs)/orders')}
+                        >
+                          <View style={styles.readyOrderItemContent}>
+                            <Text style={styles.readyOrderItemText}>{itemsText}</Text>
+                            <Text style={styles.readyOrderItemPrice}>₺{Number(order.total_amount || 0).toFixed(2)}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
             </View>
           )}
         </View>
@@ -539,6 +777,9 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 20,
   },
   header: {
     padding: 24,
@@ -607,6 +848,7 @@ const styles = StyleSheet.create({
   },
   quickActionsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     gap: 12,
   },
@@ -803,6 +1045,180 @@ const styles = StyleSheet.create({
   transactionAmount: {
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  readyOrderCard: {
+    backgroundColor: '#10b981',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: '#34d399',
+  },
+  readyOrderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  readyOrderIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  readyOrderIcon: {
+    fontSize: 24,
+  },
+  readyOrderInfo: {
+    flex: 1,
+  },
+  readyOrderTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  readyOrderSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  readyOrderItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  readyOrderItemText: {
+    fontSize: 14,
+    color: '#ffffff',
+    fontWeight: '500',
+    flex: 1,
+  },
+  readyOrderItemPrice: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  expandIcon: {
+    fontSize: 16,
+    color: '#ffffff',
+    marginLeft: 8,
+  },
+  readyOrderDetails: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  readyOrderItemContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flex: 1,
+  },
+  // Sipariş Takip Kartı Stilleri
+  orderTrackingCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#334155',
+    marginBottom: 12,
+  },
+  orderTrackingCardReady: {
+    backgroundColor: '#065f46',
+    borderColor: '#10b981',
+    borderWidth: 3,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  orderTrackingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  orderTrackingIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  orderTrackingIcon: {
+    fontSize: 24,
+  },
+  orderTrackingInfo: {
+    flex: 1,
+  },
+  orderTrackingTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  orderTrackingOrderNumber: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  orderTrackingStatusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#f59e0b20',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  orderTrackingStatusBadgeReady: {
+    backgroundColor: '#10b98120',
+    borderColor: '#10b981',
+  },
+  orderTrackingStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#f59e0b',
+  },
+  orderTrackingStatusTextReady: {
+    color: '#10b981',
+  },
+  orderTrackingDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  orderTrackingItems: {
+    fontSize: 14,
+    color: '#e2e8f0',
+    flex: 1,
+    marginRight: 12,
+  },
+  orderTrackingAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  orderTrackingCardEmpty: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+    opacity: 0.7,
+  },
+  orderTrackingItemsEmpty: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontStyle: 'italic',
   },
 });
 

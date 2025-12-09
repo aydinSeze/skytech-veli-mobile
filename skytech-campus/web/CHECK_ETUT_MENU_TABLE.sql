@@ -26,3 +26,4 @@ ORDER BY ordinal_position;
 -- CREATE_ETUT_MENU_TABLE.sql dosyasını çalıştırın
 -- ============================================
 
+

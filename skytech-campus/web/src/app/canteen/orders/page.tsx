@@ -26,10 +26,10 @@ export default function OrdersPage() {
         }
 
         try {
-            // Siparişin öğrencisini bul
+            // 1. ÖNCE ÖĞRENCİNİN GÜNCEL BAKİYESİNİ VERİTABANINDAN ÇEK
             const { data: studentData, error: studentError } = await supabase
                 .from('students')
-                .select('id, full_name, wallet_balance, access_code, student_number')
+                .select('id, full_name, wallet_balance, access_code, student_number, school_id')
                 .eq('id', order.student_id)
                 .eq('school_id', userSchoolId)
                 .single();
@@ -39,12 +39,16 @@ export default function OrdersPage() {
                 return
             }
 
-            // Bakiyeyi kontrol et
-            const previousBalance = studentData.wallet_balance || 0;
-            const newBalance = previousBalance - order.total_amount;
+            // 2. GÜNCEL BAKİYEYİ AL (VERİTABANINDAN ÇEKİLEN DEĞER)
+            const currentBalance = Number(studentData.wallet_balance || 0);
             
+            // 3. YENİ BAKİYEYİ HESAPLA
+            const orderAmount = Number(order.total_amount || 0);
+            const newBalance = currentBalance - orderAmount;
+            
+            // 4. BAKİYE KONTROLÜ
             if (newBalance < 0) {
-                alert(`⚠️ Öğrencinin bakiyesi yetersiz!\nMevcut: ₺${previousBalance.toFixed(2)}\nGerekli: ₺${order.total_amount.toFixed(2)}`)
+                alert(`⚠️ Öğrencinin bakiyesi yetersiz!\nMevcut: ₺${currentBalance.toFixed(2)}\nGerekli: ₺${orderAmount.toFixed(2)}`)
                 return
             }
 
@@ -90,7 +94,7 @@ export default function OrdersPage() {
                 }
             }
 
-            // MUHASEBE KAYDI - Transaction oluştur (bakiye bilgileri ile)
+            // 5. MUHASEBE KAYDI - Transaction oluştur (BAKİYE BİLGİLERİ İLE)
             const transactionItems = Array.isArray(order.items_json) 
                 ? order.items_json.map((item: any) => ({
                     ...item,
@@ -98,28 +102,78 @@ export default function OrdersPage() {
                 }))
                 : order.items_json;
             
-            await supabase.from('transactions').insert({
+            // Transaction oluştur - previous_balance ve new_balance değerlerini KESIN olarak kaydet
+            // ÖNEMLİ: currentBalance ve newBalance değerlerini Number() ile kesinleştir
+            const transactionData: any = {
                 student_id: studentData.id,
-                school_id: order.school_id, // OKUL BAZLI İZOLASYON
+                school_id: studentData.school_id || order.school_id, // OKUL BAZLI İZOLASYON
                 transaction_type: 'purchase',
-                amount: -order.total_amount,
+                amount: -orderAmount,
                 items_json: {
                     items: transactionItems,
-                    order_id: order.id,
+                    order_id: order.id, // items_json içinde order_id bilgisi
                     source: 'MOBİL_SİPARİŞ',
                     note: 'Mobil Sipariş Teslimi'
                 },
-                order_id: order.id,
-                previous_balance: previousBalance,
-                new_balance: newBalance
-            })
+                previous_balance: Number(currentBalance.toFixed(2)), // İŞLEM ÖNCESİ BAKİYE (GÜNCEL) - KESIN NUMERIC
+                new_balance: Number(newBalance.toFixed(2)) // İŞLEM SONRASI BAKİYE (HESAPLANAN) - KESIN NUMERIC
+            };
+            
+            // Debug: Bakiye değerlerini konsola yazdır
+            console.log('Transaction Bakiye Bilgileri:', {
+                currentBalance,
+                orderAmount,
+                newBalance,
+                previous_balance: transactionData.previous_balance,
+                new_balance: transactionData.new_balance
+            });
+            
+            // Transaction oluştur - order_id kolonu yoksa hata vermemesi için
+            // ÖNCE order_id OLMADAN dene (güvenli yol)
+            let transactionError: any = null;
+            
+            // İlk deneme: order_id olmadan (güvenli - kolon yoksa hata vermez)
+            const { error: errorWithoutOrderId } = await supabase
+                .from('transactions')
+                .insert(transactionData);
+            
+            if (errorWithoutOrderId) {
+                // Eğer order_id kolonu hatası varsa, zaten order_id olmadan denedik
+                // Bu durumda başka bir hata var demektir
+                if (errorWithoutOrderId.message?.includes('order_id') || errorWithoutOrderId.code === '42703') {
+                    // order_id kolonu yok, ama zaten order_id olmadan denedik
+                    // Bu durumda başka bir sorun var, hatayı göster
+                    transactionError = errorWithoutOrderId;
+                } else {
+                    // Başka bir hata, order_id ile tekrar dene (belki kolon var ve başka bir sorun var)
+                    const { error: errorWithOrderId } = await supabase
+                        .from('transactions')
+                        .insert({ ...transactionData, order_id: order.id });
+                    
+                    if (errorWithOrderId) {
+                        transactionError = errorWithOrderId;
+                    }
+                }
+            }
+            
+            if (transactionError) {
+                console.error('Transaction oluşturma hatası:', transactionError);
+                alert('❌ İşlem kaydı oluşturulamadı: ' + (transactionError.message || 'Bilinmeyen hata'));
+                return;
+            }
 
-            // Bakiyeyi güncelle
-            await supabase
+            // 6. BAKİYEYİ GÜNCELLE (Transaction'dan SONRA)
+            const { error: balanceUpdateError } = await supabase
                 .from('students')
                 .update({ wallet_balance: newBalance })
                 .eq('id', studentData.id)
                 .eq('school_id', userSchoolId) // OKUL BAZLI İZOLASYON
+
+            if (balanceUpdateError) {
+                console.error('Bakiye güncelleme hatası:', balanceUpdateError)
+                alert('❌ Bakiye güncellenemedi: ' + balanceUpdateError.message)
+                return
+            }
 
             // Siparişi tamamla
             await supabase
@@ -176,6 +230,18 @@ export default function OrdersPage() {
 
             if (error) throw error;
 
+            // Türkçe karakter dönüştürme fonksiyonu
+            const latinify = (str: string): string => {
+                if (!str) return '';
+                const mapping: { [key: string]: string } = {
+                    'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U',
+                    'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I',
+                    'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C',
+                    '₺': 'TL'
+                };
+                return str.split('').map(char => mapping[char] || char).join('');
+            };
+
             // PDF oluştur
             const doc = new jsPDF();
             
@@ -188,17 +254,22 @@ export default function OrdersPage() {
             doc.text(`Tarih: ${now.toLocaleDateString('tr-TR')}`, 14, 36);
             doc.text(`Toplam Siparis: ${orders?.length || 0}`, 14, 42);
 
-            // Tablo verileri
-            const tableData = (orders || []).map((order: any) => [
-                order.students?.full_name || 'Bilinmiyor',
-                order.students?.student_number || '-',
-                new Date(order.created_at).toLocaleDateString('tr-TR'),
-                new Date(order.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-                order.status === 'completed' ? 'Tamamlandi' : 
-                order.status === 'ready' ? 'Hazir' :
-                order.status === 'preparing' ? 'Hazirlaniyor' : 'Beklemede',
-                `₺${order.total_amount.toFixed(2)}`
-            ]);
+            // Tablo verileri - Türkçe karakterleri düzelt ve sayı formatını düzelt
+            const tableData = (orders || []).map((order: any) => {
+                const totalAmount = Number(order.total_amount || 0);
+                const formattedAmount = totalAmount.toFixed(2).replace('.', ',');
+                
+                return [
+                    latinify(order.students?.full_name || 'Bilinmiyor'),
+                    order.students?.student_number || '-',
+                    new Date(order.created_at).toLocaleDateString('tr-TR'),
+                    new Date(order.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+                    order.status === 'completed' ? 'Tamamlandi' : 
+                    order.status === 'ready' ? 'Hazir' :
+                    order.status === 'preparing' ? 'Hazirlaniyor' : 'Beklemede',
+                    `${formattedAmount} TL`
+                ];
+            });
 
             autoTable(doc, {
                 startY: 50,
@@ -206,7 +277,18 @@ export default function OrdersPage() {
                 body: tableData,
                 theme: 'striped',
                 headStyles: { fillColor: [59, 130, 246] },
-                styles: { fontSize: 9 }
+                styles: { fontSize: 9 },
+                didParseCell: function (data: any) {
+                    // Tüm hücrelerdeki Türkçe karakterleri düzelt
+                    if (data.cell.text) {
+                        data.cell.text = data.cell.text.map((t: any) => {
+                            if (typeof t === 'string') {
+                                return latinify(t);
+                            }
+                            return t;
+                        });
+                    }
+                }
             });
 
             // Dosya adı

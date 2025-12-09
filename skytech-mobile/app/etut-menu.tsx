@@ -6,135 +6,104 @@ import {
     FlatList,
     TouchableOpacity,
     ActivityIndicator,
-    Image,
-    TextInput,
     Alert,
     Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { useStudent } from '../context/StudentContext';
-import { ArrowLeft, Search, Coffee, Utensils, Plus, Minus, ShoppingCart, X } from 'lucide-react-native';
+import { ArrowLeft, Calendar, Utensils, ShoppingCart, Plus, Minus, X } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 
-type Product = {
+type EtutMenu = {
     id: string;
-    name: string;
-    sell_price?: number;
-    selling_price?: number;
-    description?: string;
-    image_url?: string;
-    category?: string;
-    school_id?: string;
+    menu_date: string;
+    items_json: Array<{ name: string; price: number }>;
+    is_active: boolean;
 };
 
 type CartItem = {
-    product: Product;
+    menuItem: { name: string; price: number };
     quantity: number;
+    menuDate: string;
 };
 
-export default function MenuScreen() {
+export default function EtutMenuScreen() {
     const { student } = useStudent();
-    const [products, setProducts] = useState<Product[]>([]);
-    const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+    const [menus, setMenus] = useState<EtutMenu[]>([]);
     const [loading, setLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState('');
     const [cart, setCart] = useState<CartItem[]>([]);
     const [isCartModalOpen, setIsCartModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
-        fetchMenu();
+        fetchEtutMenus();
     }, [student]);
 
-    const fetchMenu = async () => {
-        if (!student) {
-            console.log('Öğrenci verisi yok');
-            setLoading(false);
-            return;
-        }
-
-        if (!student.school_id) {
-            console.log('Öğrencinin okul ID si yok:', student);
-            Alert.alert('Hata', 'Öğrenciye ait okul bilgisi bulunamadı.');
+    const fetchEtutMenus = async () => {
+        if (!student?.school_id) {
             setLoading(false);
             return;
         }
 
         try {
-            console.log('Menü aranıyor... Okul ID:', student.school_id);
-
-            const { data: productsData, error: prodError } = await supabase
-                .from('products')
+            const { data, error } = await supabase
+                .from('etut_menu')
                 .select('*')
                 .eq('school_id', student.school_id)
-                .order('name');
+                .eq('is_active', true)
+                .order('menu_date', { ascending: true });
 
-            if (prodError) {
-                console.error('Ürün çekme hatası (DETAYLI):', {
-                    error: prodError,
-                    message: prodError.message,
-                    details: prodError.details,
-                    hint: prodError.hint,
-                    code: prodError.code,
-                    schoolId: student.school_id
-                });
-                Alert.alert('Hata', `Ürünler yüklenirken hata oluştu: ${prodError.message || 'Bilinmeyen hata'}`);
-                setProducts([]);
-                setFilteredProducts([]);
-            } else {
-                console.log('✅ Bulunan ürün sayısı:', productsData?.length || 0);
-                setProducts(productsData || []);
-                setFilteredProducts(productsData || []);
-                
-                if (!productsData || productsData.length === 0) {
-                    console.warn('⚠️ Bu okulda henüz ürün yok. Okul ID:', student.school_id);
-                }
-            }
-        } catch (error) {
-            console.error('Fetch error:', error);
+            if (error) throw error;
+            setMenus(data || []);
+        } catch (error: any) {
+            console.error('Etüt menüsü çekme hatası:', error);
+            Alert.alert('Hata', `Etüt menüsü yüklenirken hata oluştu: ${error.message || 'Bilinmeyen hata'}`);
         } finally {
             setLoading(false);
         }
     };
 
-    const handleSearch = (text: string) => {
-        setSearchQuery(text);
-        if (text.trim() === '') {
-            setFilteredProducts(products);
-        } else {
-            const filtered = products.filter(p =>
-                p.name.toLowerCase().includes(text.toLowerCase())
-            );
-            setFilteredProducts(filtered);
-        }
+    const formatDate = (dateString: string) => {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('tr-TR', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
     };
 
-    const addToCart = (product: Product) => {
-        const existingItem = cart.find(item => item.product.id === product.id);
+    const addToCart = (menuItem: { name: string; price: number }, menuDate: string) => {
+        const existingItem = cart.find(item => 
+            item.menuItem.name === menuItem.name && item.menuDate === menuDate
+        );
+        
         if (existingItem) {
             setCart(cart.map(item =>
-                item.product.id === product.id
+                item.menuItem.name === menuItem.name && item.menuDate === menuDate
                     ? { ...item, quantity: item.quantity + 1 }
                     : item
             ));
         } else {
-            setCart([...cart, { product, quantity: 1 }]);
+            setCart([...cart, { menuItem, quantity: 1, menuDate }]);
         }
-        Alert.alert('Başarılı', `${product.name} sepete eklendi!`);
+        Alert.alert('Başarılı', `${menuItem.name} sepete eklendi!`);
     };
 
-    const removeFromCart = (productId: string) => {
-        setCart(cart.filter(item => item.product.id !== productId));
+    const removeFromCart = (menuItemName: string, menuDate: string) => {
+        setCart(cart.filter(item => 
+            !(item.menuItem.name === menuItemName && item.menuDate === menuDate)
+        ));
     };
 
-    const updateCartQuantity = (productId: string, quantity: number) => {
+    const updateCartQuantity = (menuItemName: string, menuDate: string, quantity: number) => {
         if (quantity <= 0) {
-            removeFromCart(productId);
+            removeFromCart(menuItemName, menuDate);
         } else {
             setCart(cart.map(item =>
-                item.product.id === productId
+                item.menuItem.name === menuItemName && item.menuDate === menuDate
                     ? { ...item, quantity }
                     : item
             ));
@@ -143,8 +112,7 @@ export default function MenuScreen() {
 
     const getTotalPrice = () => {
         return cart.reduce((total, item) => {
-            const price = item.product.sell_price || item.product.selling_price || 0;
-            return total + (price * item.quantity);
+            return total + (item.menuItem.price * item.quantity);
         }, 0);
     };
 
@@ -162,9 +130,10 @@ export default function MenuScreen() {
         setIsSubmitting(true);
         try {
             const items = cart.map(item => ({
-                name: item.product.name,
+                name: item.menuItem.name,
                 quantity: item.quantity,
-                price: item.product.sell_price || item.product.selling_price || 0
+                price: item.menuItem.price,
+                menu_date: item.menuDate
             }));
 
             const totalAmount = getTotalPrice();
@@ -184,14 +153,14 @@ export default function MenuScreen() {
                 return;
             }
 
-            // Sipariş oluştur (BAKİYE DÜŞÜRME - Sadece teslim edildiğinde düşecek)
+            // Etüt yemekleri siparişi oluştur (BAKİYE DÜŞÜRME YOK - Sadece teslim edildiğinde)
             const { data: orderData, error: orderError } = await supabase
                 .from('orders')
                 .insert({
                     student_id: student.id,
                     school_id: student.school_id,
-                    order_type: 'mobile',
-                    status: 'pending', // Beklemede - bakiye düşmedi
+                    order_type: 'etut', // Etüt yemekleri siparişi
+                    status: 'pending',
                     items_json: items,
                     total_amount: totalAmount,
                     payment_status: 'pending' // Ödeme durumu: pending = bakiye düşmedi
@@ -201,16 +170,12 @@ export default function MenuScreen() {
 
             if (orderError) throw orderError;
 
-            // BAKİYE DÜŞÜRME YOK - Sadece sipariş oluşturuldu
-            // Bakiye düşüşü sadece kantin panelinde "Teslim Edildi" butonuna basıldığında olacak
-
-            Alert.alert('Başarılı', 'Siparişiniz oluşturuldu!', [
+            Alert.alert('Başarılı', 'Etüt yemekleri siparişiniz oluşturuldu!', [
                 {
                     text: 'Tamam',
                     onPress: () => {
                         setCart([]);
                         setIsCartModalOpen(false);
-                        router.back();
                     }
                 }
             ]);
@@ -222,51 +187,59 @@ export default function MenuScreen() {
         }
     };
 
-    const renderProductItem = ({ item }: { item: Product }) => {
-        const cartItem = cart.find(ci => ci.product.id === item.id);
-        const price = item.sell_price || item.selling_price || 0;
-
-        return (
-            <View style={styles.productCard}>
-                <View style={styles.productIcon}>
-                    <Utensils size={24} color="#3b82f6" />
-                </View>
-                <View style={styles.productInfo}>
-                    <Text style={styles.productName}>{item.name}</Text>
-                    {item.description && (
-                        <Text style={styles.productDesc} numberOfLines={1}>{item.description}</Text>
-                    )}
-                </View>
-                <View style={styles.productActions}>
-                    <Text style={styles.productPrice}>₺{price.toFixed(2)}</Text>
-                    {cartItem ? (
-                        <View style={styles.quantityControls}>
-                            <TouchableOpacity
-                                onPress={() => updateCartQuantity(item.id, cartItem.quantity - 1)}
-                                style={styles.quantityButton}
-                            >
-                                <Minus size={16} color="#ffffff" />
-                            </TouchableOpacity>
-                            <Text style={styles.quantityText}>{cartItem.quantity}</Text>
-                            <TouchableOpacity
-                                onPress={() => updateCartQuantity(item.id, cartItem.quantity + 1)}
-                                style={styles.quantityButton}
-                            >
-                                <Plus size={16} color="#ffffff" />
-                            </TouchableOpacity>
-                        </View>
-                    ) : (
-                        <TouchableOpacity
-                            onPress={() => addToCart(item)}
-                            style={styles.addButton}
-                        >
-                            <Plus size={16} color="#ffffff" />
-                        </TouchableOpacity>
-                    )}
+    const renderMenuCard = ({ item }: { item: EtutMenu }) => (
+        <View style={styles.menuCard}>
+            <View style={styles.menuHeader}>
+                <View style={styles.dateContainer}>
+                    <Calendar size={20} color="#10b981" />
+                    <Text style={styles.menuDate}>{formatDate(item.menu_date)}</Text>
                 </View>
             </View>
-        );
-    };
+            <View style={styles.menuItems}>
+                {item.items_json && Array.isArray(item.items_json) && item.items_json.map((menuItem, idx) => {
+                    const cartItem = cart.find(ci => 
+                        ci.menuItem.name === menuItem.name && ci.menuDate === item.menu_date
+                    );
+                    
+                    return (
+                        <View key={idx} style={styles.menuItem}>
+                            <View style={styles.menuItemInfo}>
+                                <Utensils size={16} color="#94a3b8" />
+                                <Text style={styles.menuItemName}>{menuItem.name}</Text>
+                            </View>
+                            <View style={styles.menuItemActions}>
+                                <Text style={styles.menuItemPrice}>₺{menuItem.price.toFixed(2)}</Text>
+                                {cartItem ? (
+                                    <View style={styles.quantityControls}>
+                                        <TouchableOpacity
+                                            onPress={() => updateCartQuantity(menuItem.name, item.menu_date, cartItem.quantity - 1)}
+                                            style={styles.quantityButton}
+                                        >
+                                            <Minus size={14} color="#ffffff" />
+                                        </TouchableOpacity>
+                                        <Text style={styles.quantityText}>{cartItem.quantity}</Text>
+                                        <TouchableOpacity
+                                            onPress={() => updateCartQuantity(menuItem.name, item.menu_date, cartItem.quantity + 1)}
+                                            style={styles.quantityButton}
+                                        >
+                                            <Plus size={14} color="#ffffff" />
+                                        </TouchableOpacity>
+                                    </View>
+                                ) : (
+                                    <TouchableOpacity
+                                        onPress={() => addToCart(menuItem, item.menu_date)}
+                                        style={styles.addButton}
+                                    >
+                                        <Plus size={14} color="#ffffff" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
+    );
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -274,7 +247,7 @@ export default function MenuScreen() {
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                     <ArrowLeft size={24} color="#ffffff" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Kantin Menüsü</Text>
+                <Text style={styles.headerTitle}>Etüt Yemekleri</Text>
                 <TouchableOpacity
                     onPress={() => setIsCartModalOpen(true)}
                     style={styles.cartButton}
@@ -288,36 +261,24 @@ export default function MenuScreen() {
                 </TouchableOpacity>
             </View>
 
-            <View style={styles.searchContainer}>
-                <View style={styles.searchBar}>
-                    <Search size={20} color="#94a3b8" />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Ürün ara..."
-                        placeholderTextColor="#64748b"
-                        value={searchQuery}
-                        onChangeText={handleSearch}
-                    />
-                </View>
-            </View>
-
             {loading ? (
                 <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color="#3b82f6" />
+                    <ActivityIndicator size="large" color="#10b981" />
                 </View>
             ) : (
                 <FlatList
-                    data={filteredProducts}
-                    renderItem={renderProductItem}
+                    data={menus}
+                    renderItem={renderMenuCard}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={
                         <View style={styles.emptyState}>
-                            <Coffee size={48} color="#334155" />
+                            <Calendar size={64} color="#334155" />
                             <Text style={styles.emptyStateText}>
-                                {products.length === 0
-                                    ? 'Bu okulda henüz ürün yok.'
-                                    : 'Aradığınız ürün bulunamadı.'}
+                                Henüz etüt menüsü yok
+                            </Text>
+                            <Text style={styles.emptyStateSubtext}>
+                                Etüt günleri için yemek menüsü eklendiğinde burada görünecek.
                             </Text>
                         </View>
                     }
@@ -334,7 +295,7 @@ export default function MenuScreen() {
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Sepetim</Text>
+                            <Text style={styles.modalTitle}>Etüt Yemekleri Sepetim</Text>
                             <TouchableOpacity
                                 onPress={() => setIsCartModalOpen(false)}
                                 style={styles.closeButton}
@@ -352,31 +313,32 @@ export default function MenuScreen() {
                             <>
                                 <FlatList
                                     data={cart}
-                                    keyExtractor={(item) => item.product.id}
+                                    keyExtractor={(item, idx) => `${item.menuItem.name}-${item.menuDate}-${idx}`}
                                     renderItem={({ item }) => (
                                         <View style={styles.cartItem}>
                                             <View style={styles.cartItemInfo}>
-                                                <Text style={styles.cartItemName}>{item.product.name}</Text>
+                                                <Text style={styles.cartItemName}>{item.menuItem.name}</Text>
+                                                <Text style={styles.cartItemDate}>{formatDate(item.menuDate)}</Text>
                                                 <Text style={styles.cartItemPrice}>
-                                                    ₺{(item.product.sell_price || item.product.selling_price || 0).toFixed(2)} x {item.quantity}
+                                                    ₺{item.menuItem.price.toFixed(2)} x {item.quantity}
                                                 </Text>
                                             </View>
                                             <View style={styles.cartItemActions}>
                                                 <TouchableOpacity
-                                                    onPress={() => updateCartQuantity(item.product.id, item.quantity - 1)}
+                                                    onPress={() => updateCartQuantity(item.menuItem.name, item.menuDate, item.quantity - 1)}
                                                     style={styles.cartQuantityButton}
                                                 >
                                                     <Minus size={16} color="#ffffff" />
                                                 </TouchableOpacity>
                                                 <Text style={styles.cartQuantityText}>{item.quantity}</Text>
                                                 <TouchableOpacity
-                                                    onPress={() => updateCartQuantity(item.product.id, item.quantity + 1)}
+                                                    onPress={() => updateCartQuantity(item.menuItem.name, item.menuDate, item.quantity + 1)}
                                                     style={styles.cartQuantityButton}
                                                 >
                                                     <Plus size={16} color="#ffffff" />
                                                 </TouchableOpacity>
                                                 <TouchableOpacity
-                                                    onPress={() => removeFromCart(item.product.id)}
+                                                    onPress={() => removeFromCart(item.menuItem.name, item.menuDate)}
                                                     style={styles.removeButton}
                                                 >
                                                     <X size={16} color="#ef4444" />
@@ -433,6 +395,81 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#ffffff',
     },
+    centerContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    listContent: {
+        padding: 16,
+        gap: 16,
+    },
+    menuCard: {
+        backgroundColor: '#1e293b',
+        borderRadius: 16,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: '#334155',
+    },
+    menuHeader: {
+        marginBottom: 16,
+    },
+    dateContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    menuDate: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#ffffff',
+        textTransform: 'capitalize',
+    },
+    menuItems: {
+        gap: 12,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        backgroundColor: '#0f172a',
+        borderRadius: 8,
+    },
+    menuItemInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        flex: 1,
+    },
+    menuItemName: {
+        fontSize: 16,
+        color: '#e2e8f0',
+        fontWeight: '500',
+    },
+    menuItemPrice: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#10b981',
+    },
+    emptyState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 48,
+    },
+    emptyStateText: {
+        color: '#ffffff',
+        fontSize: 18,
+        fontWeight: '600',
+        marginTop: 16,
+        marginBottom: 8,
+    },
+    emptyStateSubtext: {
+        color: '#64748b',
+        fontSize: 14,
+        textAlign: 'center',
+    },
     cartButton: {
         padding: 8,
         borderRadius: 8,
@@ -455,82 +492,16 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: 'bold',
     },
-    centerContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchContainer: {
-        padding: 16,
-        paddingBottom: 8,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1e293b',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        height: 48,
-        borderWidth: 1,
-        borderColor: '#334155',
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 8,
-        color: '#ffffff',
-        fontSize: 16,
-    },
-    listContent: {
-        padding: 16,
-        gap: 12,
-    },
-    productCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1e293b',
-        padding: 16,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: '#334155',
-    },
-    productIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 12,
-    },
-    productInfo: {
-        flex: 1,
-    },
-    productName: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#ffffff',
-        marginBottom: 2,
-    },
-    productDesc: {
-        fontSize: 12,
-        color: '#94a3b8',
-    },
-    productActions: {
+    menuItemActions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
     },
-    productPrice: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#3b82f6',
-        marginRight: 8,
-    },
     addButton: {
-        backgroundColor: '#3b82f6',
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        backgroundColor: '#10b981',
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -538,14 +509,14 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        backgroundColor: '#3b82f6',
+        backgroundColor: '#10b981',
         paddingHorizontal: 8,
         paddingVertical: 4,
-        borderRadius: 16,
+        borderRadius: 14,
     },
     quantityButton: {
-        width: 24,
-        height: 24,
+        width: 20,
+        height: 20,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -555,16 +526,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         minWidth: 20,
         textAlign: 'center',
-    },
-    emptyState: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 48,
-    },
-    emptyStateText: {
-        color: '#64748b',
-        marginTop: 16,
-        fontSize: 16,
     },
     modalOverlay: {
         flex: 1,
@@ -624,6 +585,11 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         marginBottom: 4,
     },
+    cartItemDate: {
+        fontSize: 12,
+        color: '#94a3b8',
+        marginBottom: 4,
+    },
     cartItemPrice: {
         fontSize: 14,
         color: '#94a3b8',
@@ -634,7 +600,7 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     cartQuantityButton: {
-        backgroundColor: '#3b82f6',
+        backgroundColor: '#10b981',
         width: 32,
         height: 32,
         borderRadius: 16,
@@ -670,10 +636,10 @@ const styles = StyleSheet.create({
     totalPrice: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#3b82f6',
+        color: '#10b981',
     },
     orderButton: {
-        backgroundColor: '#3b82f6',
+        backgroundColor: '#10b981',
         padding: 16,
         borderRadius: 12,
         alignItems: 'center',
@@ -687,3 +653,4 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
 });
+

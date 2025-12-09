@@ -7,9 +7,10 @@ import Link from 'next/link'
 import {
     Plus, Search, School as SchoolIcon, MapPin, Users, Key,
     Edit2, Trash2, X, Check, Copy, Power, DollarSign, Wallet, Minus, ChevronDown, ChevronUp, Building2,
-    Download, Upload
+    Download, Upload, Database, FileText, Calendar
 } from 'lucide-react'
 import { addSchoolCredit } from '@/actions/school-actions'
+import { getSchoolBackups, downloadBackupFile, restoreBackupData } from '@/actions/backup-actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,6 +62,10 @@ export default function SchoolsPage() {
     // Yedekleme/Geri Yükleme
     const [isBackupLoading, setIsBackupLoading] = useState(false)
     const [isRestoreLoading, setIsRestoreLoading] = useState(false)
+    const [isBackupsModalOpen, setIsBackupsModalOpen] = useState(false)
+    const [selectedSchoolForBackups, setSelectedSchoolForBackups] = useState<School | null>(null)
+    const [backupsList, setBackupsList] = useState<any[]>([])
+    const [loadingBackups, setLoadingBackups] = useState(false)
 
     const [formData, setFormData] = useState<SchoolFormData>({
         name: '',
@@ -487,6 +492,83 @@ export default function SchoolsPage() {
         }
     }
 
+    // Yedeklemeleri listele
+    const handleShowBackups = async (school: School) => {
+        setSelectedSchoolForBackups(school)
+        setIsBackupsModalOpen(true)
+        setLoadingBackups(true)
+
+        try {
+            const result = await getSchoolBackups(school.id)
+            if (result.success) {
+                setBackupsList(result.backups || [])
+            } else {
+                console.error('Yedeklemeler çekilirken hata:', result.error)
+                alert('Yedeklemeler yüklenirken hata: ' + (result.error || 'Bilinmeyen hata'))
+                setBackupsList([])
+            }
+        } catch (error: any) {
+            console.error('Yedeklemeler yüklenirken hata:', error)
+            alert('Yedeklemeler yüklenirken hata: ' + error.message)
+            setBackupsList([])
+        } finally {
+            setLoadingBackups(false)
+        }
+    }
+
+    // Yedeği geri yükle
+    const handleRestoreFromBackup = async (fileName: string) => {
+        if (!selectedSchoolForBackups) return
+        
+        if (!confirm(`⚠️ UYARI: "${selectedSchoolForBackups.name}" okulunun TÜM MEVCUT VERİLERİ SİLİNECEK ve "${fileName}" yedeği ile değiştirilecektir. Emin misiniz?`)) {
+            return
+        }
+
+        setIsRestoreLoading(true)
+        try {
+            const result = await restoreBackupData(selectedSchoolForBackups.id, fileName)
+            if (result.success) {
+                alert('✅ Geri yükleme başarıyla tamamlandı!')
+                setIsBackupsModalOpen(false)
+                fetchSchools() // Listeyi yenile
+                router.refresh() // Next.js cache'i temizle
+            } else {
+                alert('❌ Geri yükleme hatası: ' + (result.error || 'Bilinmeyen hata'))
+            }
+        } catch (error: any) {
+            console.error('Geri yükleme hatası:', error)
+            alert('❌ Geri yükleme sırasında bir hata oluştu: ' + error.message)
+        } finally {
+            setIsRestoreLoading(false)
+        }
+    }
+
+    // Yedeği indir
+    const handleDownloadBackup = async (fileName: string) => {
+        if (!selectedSchoolForBackups) return
+        
+        try {
+            const result = await downloadBackupFile(selectedSchoolForBackups.id, fileName)
+            if (result.data) {
+                const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = fileName
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+                alert('✅ Yedek başarıyla indirildi!')
+            } else {
+                alert('❌ Yedek indirilirken hata: ' + (result.error || 'Bilinmeyen hata'))
+            }
+        } catch (error: any) {
+            console.error('Yedek indirme hatası:', error)
+            alert('❌ Yedek indirilirken bir hata oluştu: ' + error.message)
+        }
+    }
+
     // Geri yükleme işlemini gerçekleştir
     const performRestore = async (backupData: any, school: School) => {
         // Okul ID kontrolü
@@ -547,6 +629,7 @@ export default function SchoolsPage() {
         await fetchSchools()
         router.refresh()
     }
+
 
     const filteredSchools = schools.filter(school =>
         school.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -626,6 +709,12 @@ export default function SchoolsPage() {
                                     </div>
 
                                     <div className="flex items-center gap-2">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleShowBackups(school); }}
+                                            className="p-2 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg transition-colors relative z-20"
+                                            title="Yedekler (Son 7 Gün)">
+                                            <Database size={20} />
+                                        </button>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); handleBackup(school); }}
                                             disabled={isBackupLoading}
@@ -965,6 +1054,102 @@ export default function SchoolsPage() {
                                 {creditOperation === 'add' ? '💰 Artır' : '📉 Azalt'}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* YEDEKLER MODALI */}
+            {isBackupsModalOpen && selectedSchoolForBackups && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 p-8 rounded-2xl w-full max-w-2xl border border-slate-800 shadow-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                                    <Database size={28} className="text-indigo-400" />
+                                    Yedekler
+                                </h2>
+                                <p className="text-slate-400 mt-1">{selectedSchoolForBackups.name}</p>
+                            </div>
+                            <button onClick={() => setIsBackupsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        {loadingBackups ? (
+                            <div className="text-center text-slate-500 py-10">
+                                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+                                Yedekler yükleniyor...
+                            </div>
+                        ) : backupsList.length === 0 ? (
+                            <div className="text-center text-slate-500 py-10">
+                                <FileText size={48} className="mx-auto mb-4 text-slate-600" />
+                                <p>Son 7 gün içinde yedek bulunamadı.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <div className="text-sm text-slate-400 mb-4">
+                                    Son 7 günlük yedekler ({backupsList.length} adet)
+                                </div>
+                                {backupsList.map((backup, index) => {
+                                    const backupDate = new Date(backup.date)
+                                    const formattedDate = backupDate.toLocaleString('tr-TR', {
+                                        year: 'numeric',
+                                        month: 'long',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                    })
+                                    const fileSizeMB = (backup.size / (1024 * 1024)).toFixed(2)
+                                    
+                                    return (
+                                        <div key={index} className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 flex items-center justify-between hover:bg-slate-800 transition-colors">
+                                            <div className="flex items-center gap-4 flex-1">
+                                                <div className="p-2 bg-indigo-500/20 rounded-lg">
+                                                    <FileText size={20} className="text-indigo-400" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="text-white font-medium flex items-center gap-2">
+                                                        <Calendar size={16} className="text-slate-400" />
+                                                        {backup.fileName}
+                                                    </div>
+                                                    <div className="text-sm text-slate-400 mt-1">
+                                                        {formattedDate} • {fileSizeMB} MB
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => handleDownloadBackup(backup.fileName)}
+                                                    className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                                                    title="Yedeği İndir"
+                                                >
+                                                    <Download size={16} />
+                                                    İndir
+                                                </button>
+                                                <button
+                                                    onClick={() => handleRestoreFromBackup(backup.fileName)}
+                                                    disabled={isRestoreLoading}
+                                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                                    title="Yedeği Geri Yükle"
+                                                >
+                                                    {isRestoreLoading ? (
+                                                        <>
+                                                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white"></div>
+                                                            Yükleniyor...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Upload size={16} />
+                                                            Geri Yükle
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

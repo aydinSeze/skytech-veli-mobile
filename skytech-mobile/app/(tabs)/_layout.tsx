@@ -10,6 +10,7 @@ const LAST_VIEWED_NEWS_KEY = '@skytech:last_viewed_news_timestamp';
 
 export default function TabLayout() {
   const [hasNewNews, setHasNewNews] = useState(false);
+  const [hasNewTransaction, setHasNewTransaction] = useState(false);
 
   // Yeni haber kontrolü
   const checkForNewNews = React.useCallback(async () => {
@@ -45,18 +46,63 @@ export default function TabLayout() {
     }
   }, []);
 
+  // Yeni işlem kontrolü
+  const checkForNewTransaction = React.useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('school_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.school_id) return;
+
+      // Son görüntülenme zamanını kontrol et
+      const lastViewedKey = '@skytech:last_viewed_transaction_timestamp';
+      const lastViewedTimestamp = await AsyncStorage.getItem(lastViewedKey);
+
+      const { data: latestTransaction } = await supabase
+        .from('transactions')
+        .select('created_at')
+        .eq('school_id', profile.school_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestTransaction) {
+        if (lastViewedTimestamp) {
+          const lastViewed = new Date(lastViewedTimestamp);
+          const latestDate = new Date(latestTransaction.created_at);
+          setHasNewTransaction(latestDate > lastViewed);
+        } else {
+          setHasNewTransaction(true);
+        }
+      } else {
+        setHasNewTransaction(false);
+      }
+    } catch (error) {
+      console.error('Yeni işlem kontrolü hatası:', error);
+      setHasNewTransaction(false);
+    }
+  }, []);
+
   // İlk yüklemede ve periyodik olarak kontrol et
   useEffect(() => {
     checkForNewNews();
+    checkForNewTransaction();
 
     // Her 30 saniyede bir kontrol et
     const interval = setInterval(() => {
       checkForNewNews();
+      checkForNewTransaction();
     }, 30000);
 
     // Real-time subscription
     const channel = supabase
-      .channel('tab-news-updates')
+      .channel('tab-updates')
       .on(
         'postgres_changes',
         {
@@ -69,13 +115,24 @@ export default function TabLayout() {
           checkForNewNews();
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'transactions',
+        },
+        () => {
+          checkForNewTransaction();
+        }
+      )
       .subscribe();
 
     return () => {
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, [checkForNewNews]);
+  }, [checkForNewNews, checkForNewTransaction]);
 
   return (
     <Tabs
@@ -125,7 +182,20 @@ export default function TabLayout() {
         name="orders"
         options={{
           title: 'İşlem Geçmişi',
-          tabBarIcon: ({ color, size }) => <ShoppingBag size={size} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={styles.iconContainer}>
+              <ShoppingBag 
+                size={size} 
+                color={hasNewTransaction && !focused ? '#10b981' : color} 
+              />
+              {hasNewTransaction && (
+                <View style={[
+                  styles.badge,
+                  { backgroundColor: '#10b981' }
+                ]} />
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen

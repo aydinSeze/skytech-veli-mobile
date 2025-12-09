@@ -130,3 +130,4 @@ GRANT SELECT ON TABLE students TO authenticated;
 -- 5. Öğrencilerin school_id'si doğru mu?
 -- ============================================
 
+

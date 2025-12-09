@@ -55,3 +55,4 @@ ALTER TABLE public.canteens ENABLE ROW LEVEL SECURITY;
 -- Mobil uygulama artık products ve canteens tablolarını okuyabilecek.
 -- ============================================
 
+

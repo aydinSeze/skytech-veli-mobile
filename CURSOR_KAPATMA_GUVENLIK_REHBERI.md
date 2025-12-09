@@ -126,3 +126,4 @@ Eğer Cursor'u açtığınızda dosyalar yoksa:
 
 Yukarıdaki adımları yaptıysanız, Cursor'u güvenle kapatabilirsiniz. Tüm değişiklikleriniz güvende! 🎉
 
+

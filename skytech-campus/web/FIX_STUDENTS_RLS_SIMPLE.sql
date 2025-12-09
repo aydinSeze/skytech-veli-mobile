@@ -131,3 +131,4 @@ USING (
 -- 4. Eğer hala görünmüyorsa, profile'da school_id yok demektir
 -- ============================================
 
+

@@ -19,9 +19,10 @@ function RootLayoutNav() {
     const inAuthGroup = segments[0] === '(tabs)';
     const isLoginPage = segments[0] === 'login';
     const isMenuPage = segments[0] === 'menu';
+    const isEtutMenuPage = segments[0] === 'etut-menu';
 
-    // Eğer giriş yapmamışsa ve tabs veya menu sayfasındaysa login'e yönlendir
-    if (!student && (inAuthGroup || isMenuPage)) {
+    // Eğer giriş yapmamışsa ve tabs, menu veya etut-menu sayfasındaysa login'e yönlendir
+    if (!student && (inAuthGroup || isMenuPage || isEtutMenuPage)) {
       router.replace('/login');
     } 
     // Eğer giriş yapmışsa ve login sayfasındaysa ana sayfaya yönlendir
@@ -42,6 +43,7 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
       <Stack.Screen name="menu" />
+      <Stack.Screen name="etut-menu" />
       <Stack.Screen name="campaign-detail" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="+not-found" />

@@ -100,3 +100,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ✅ SQL MIGRATION TAMAMLANDI
 -- ============================================
 
+

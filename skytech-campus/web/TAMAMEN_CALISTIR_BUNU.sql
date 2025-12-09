@@ -172,3 +172,4 @@ WHERE u.email = 'BURAYA_EMAILINIZI_YAZIN';  -- ÖRN: 'aydinSezerr@outlook.com'
 -- 5. Web panelini yenileyin (F5)
 -- ============================================
 
+

@@ -9,7 +9,11 @@ import {
   Platform,
   Alert,
   Image,
+  Keyboard,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -25,9 +29,6 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { student, setStudent, isLoading } = useStudent();
-
-  // Eğer öğrenci zaten giriş yapmışsa, ana sayfaya yönlendir (SADECE GERÇEK GİRİŞ YAPILDIĞINDA)
-  // Çıkış yapıldığında student null olacak, bu yüzden burada otomatik yönlendirme olmayacak
 
   // Uygulama açıldığında kaydedilmiş kodu yükle (SADECE INPUT'U DOLDUR, GİRİŞ YAPMA)
   useEffect(() => {
@@ -110,65 +111,91 @@ export default function LoginScreen() {
     }
   };
 
+  const { height } = Dimensions.get('window');
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <View style={styles.content}>
-        <View style={styles.logoContainer}>
-          <Image
-            source={require('../assets/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.title}>SkyTech Campus</Text>
-          <Text style={styles.subtitle}>Öğrenci Portalı</Text>
-        </View>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { minHeight: height - (Platform.OS === 'ios' ? 100 : 80) }
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={Platform.OS === 'ios'}
+          keyboardDismissMode="on-drag"
+          style={styles.scrollView}
+        >
+          <View style={styles.content}>
+            <View style={styles.logoContainer}>
+              <Image
+                source={require('../assets/logo.png')}
+                style={styles.logo}
+                resizeMode="contain"
+              />
+              <Text style={styles.title}>SkyTech Campus</Text>
+              <Text style={styles.subtitle}>Öğrenci Portalı</Text>
+            </View>
 
-        <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Erişim Kodu</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Örn: A1B2C3"
-              placeholderTextColor="#64748b"
-              value={accessCode}
-              onChangeText={(text) => setAccessCode(text.toUpperCase())}
-              autoCapitalize="characters"
-              keyboardType="default"
-              maxLength={6}
-              autoFocus
-            />
-            <Text style={styles.hint}>
-              Okul/kantin panelinden aldığınız 6 haneli erişim kodunu girin
-            </Text>
-          </View>
-
-          <View style={styles.checkboxContainer}>
-            <TouchableOpacity
-              style={styles.checkbox}
-              onPress={() => setRememberMe(!rememberMe)}
-            >
-              <View style={[styles.checkboxBox, rememberMe && styles.checkboxChecked]}>
-                {rememberMe && <Text style={styles.checkmark}>✓</Text>}
+            <View style={styles.form}>
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Erişim Kodu</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Örn: A1B2C3"
+                  placeholderTextColor="#64748b"
+                  value={accessCode}
+                  onChangeText={(text) => {
+                    const upperText = text.toUpperCase();
+                    setAccessCode(upperText);
+                    // 6 karakter girildiğinde klavyeyi otomatik kapat
+                    if (upperText.length === 6) {
+                      Keyboard.dismiss();
+                    }
+                  }}
+                  autoCapitalize="characters"
+                  keyboardType="default"
+                  maxLength={6}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                />
+                <Text style={styles.hint}>
+                  Okul/kantin panelinden aldığınız 6 haneli erişim kodunu girin
+                </Text>
               </View>
-              <Text style={styles.checkboxLabel}>Beni Hatırla</Text>
-            </TouchableOpacity>
-          </View>
 
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+              <View style={styles.checkboxContainer}>
+                <TouchableOpacity
+                  style={styles.checkbox}
+                  onPress={() => setRememberMe(!rememberMe)}
+                >
+                  <View style={[styles.checkboxBox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={styles.checkboxLabel}>Beni Hatırla</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, loading && styles.buttonDisabled]}
+                onPress={handleLogin}
+                disabled={loading}
+              >
+                <Text style={styles.buttonText}>
+                  {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -177,10 +204,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
   },
-  content: {
+  keyboardView: {
     flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: Platform.OS === 'ios' ? 60 : 40,
+  },
+  content: {
     justifyContent: 'center',
     padding: 24,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
   },
   logoContainer: {
     alignItems: 'center',
@@ -274,4 +312,3 @@ const styles = StyleSheet.create({
     color: '#e2e8f0',
   },
 });
-

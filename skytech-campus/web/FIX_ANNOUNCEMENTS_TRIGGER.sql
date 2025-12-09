@@ -37,3 +37,4 @@ EXECUTE FUNCTION ensure_single_active_announcement();
 -- - Haberler (haberler): İstediğiniz kadar aktif olabilir
 -- ============================================
 
+

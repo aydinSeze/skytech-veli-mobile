@@ -29,3 +29,4 @@ COMMIT;
 -- Artık her transaction'da previous_balance ve new_balance bilgileri kaydedilecek
 -- ============================================
 
+

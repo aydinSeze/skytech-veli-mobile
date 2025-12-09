@@ -102,3 +102,4 @@ COMMIT;
 -- 3. 7 günden eski yedeklemeler otomatik silinir
 -- ============================================
 
+

@@ -50,3 +50,4 @@ FROM auth.users u
 LEFT JOIN public.profiles p ON p.id = u.id
 WHERE u.email = 'aydinSezerr@outlook.com';
 
+

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { getAdminStats, getRevenueReport } from '@/actions/admin-actions'
+import { backupAllSchools, isBackupDoneToday } from '@/actions/backup-actions'
 import {
     TrendingUp, TrendingDown, School, AlertTriangle,
     DollarSign, Activity, PieChart, ArrowUpRight, Download, Calendar
@@ -9,6 +10,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { toast } from 'sonner'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +44,49 @@ export default function AdminDashboard() {
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
         setReportStartDate(firstDayOfMonth.toISOString().split('T')[0])
         setReportEndDate(today.toISOString().split('T')[0])
+
+        // Günlük yedekleme kontrolü
+        const checkAndBackup = async () => {
+            try {
+                const isDone = await isBackupDoneToday()
+                
+                if (!isDone) {
+                    // Bugün yedekleme yapılmamış, sessizce başlat
+                    const toastId = toast.loading('Günlük yedekleme kontrol ediliyor...', {
+                        position: 'top-right'
+                    })
+                    
+                    const result = await backupAllSchools()
+                    
+                    // Toast'ı kapat
+                    toast.dismiss(toastId)
+                    
+                    if (result.success) {
+                        // Başarılı mesajı göster
+                        toast.success(`Tüm okulların günlük yedeği alındı. ${result.successCount || 0} okul başarıyla yedeklendi.`, {
+                            position: 'top-right',
+                            duration: 5000
+                        })
+                    } else {
+                        // Hata mesajı göster
+                        toast.error(result.message || 'Yedekleme sırasında bir hata oluştu.', {
+                            position: 'top-right',
+                            duration: 7000
+                        })
+                    }
+                }
+                // Bugün zaten yedekleme yapılmışsa sessizce geç
+            } catch (error: any) {
+                console.error('Yedekleme kontrolü hatası:', error)
+                toast.error('Yedekleme kontrolü sırasında bir hata oluştu.', {
+                    position: 'top-right',
+                    duration: 5000
+                })
+            }
+        }
+
+        // Sayfa yüklendiğinde kontrol et
+        checkAndBackup()
     }, [])
 
     const handleGenerateReport = async () => {

@@ -174,3 +174,4 @@ GRANT DELETE ON TABLE students TO authenticated;
 -- 3. ✅ Öğrenciler listede görünecek
 -- ============================================
 
+

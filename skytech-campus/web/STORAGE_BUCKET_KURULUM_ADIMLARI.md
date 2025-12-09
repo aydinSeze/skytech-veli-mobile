@@ -80,3 +80,4 @@ EXISTS (
 4. Tarayıcı konsolunu (F12) açıp hata mesajlarını kontrol edin
 5. Supabase Dashboard -> Logs -> API Logs'tan detaylı hata mesajlarını inceleyin
 
+

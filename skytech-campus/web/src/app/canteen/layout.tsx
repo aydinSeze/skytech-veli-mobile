@@ -195,7 +195,8 @@ export default function CanteenLayout({
                     },
                     (payload) => {
                         // Sadece mobil ve etüt siparişlerini dinle
-                        if (payload.new && (payload.new.order_type === 'mobile' || payload.new.order_type === 'etut')) {
+                        const newOrder = payload.new as { order_type?: string } | null
+                        if (newOrder && (newOrder.order_type === 'mobile' || newOrder.order_type === 'etut')) {
                             fetchPendingOrders()
                         }
                     }
