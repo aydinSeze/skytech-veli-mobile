@@ -439,10 +439,13 @@ export default function CanteenDashboard() {
             }
 
             // 4. Verileri Paralel Çek (Transactions, Expenses, Products)
+            // ÖNEMLİ: Muhasebe sadece KASA/SATIŞ işlemlerini göstermeli, SİPARİŞ teslim işlemlerini DEĞİL
+            // Filtre: canteen_id IS NOT NULL (Kasa/Satış'tan yapılan işlemler) VEYA items_json.source !== 'MOBİL_SİPARİŞ'
             const [transactionsRes, expensesRes, productsRes] = await Promise.all([
                 supabase.from('transactions')
-                    .select('id, amount, transaction_type, created_at, items_json, student_id, personnel_id')
+                    .select('id, amount, transaction_type, created_at, items_json, student_id, personnel_id, canteen_id')
                     .eq('school_id', schoolId)
+                    .not('canteen_id', 'is', null) // SADECE KASA/SATIŞ İŞLEMLERİ (canteen_id olanlar)
                     .gte('created_at', startDate)
                     .lte('created_at', endDate)
                     .order('created_at', { ascending: true })
@@ -460,16 +463,36 @@ export default function CanteenDashboard() {
                     .lt('stock_quantity', 10) // Kritik stok filtresi
             ])
 
-            const transactions = transactionsRes.data || []
+            let transactions = transactionsRes.data || []
             const expensesList = expensesRes.data || []
             const criticalProducts = productsRes.data || []
 
+            // EK FİLTRE: items_json içinde source: 'MOBİL_SİPARİŞ' olanları da çıkar (güvenlik için)
+            // Çünkü bazı eski transaction'larda canteen_id olmayabilir ama source: 'MOBİL_SİPARİŞ' olabilir
+            transactions = transactions.filter(t => {
+                // Eğer items_json bir obje ise ve source: 'MOBİL_SİPARİŞ' varsa çıkar
+                if (t.items_json && typeof t.items_json === 'object' && !Array.isArray(t.items_json)) {
+                    if (t.items_json.source === 'MOBİL_SİPARİŞ' || t.items_json.note === 'Mobil Sipariş Teslimi') {
+                        return false; // Sipariş teslim işlemi, muhasebeye dahil etme
+                    }
+                }
+                // Eğer items_json bir array ise ve içinde source: 'MOBİL_SİPARİŞ' varsa çıkar
+                if (t.items_json && Array.isArray(t.items_json) && t.items_json.length > 0) {
+                    const firstItem = t.items_json[0];
+                    if (firstItem && firstItem.source === 'MOBİL_SİPARİŞ') {
+                        return false; // Sipariş teslim işlemi, muhasebeye dahil etme
+                    }
+                }
+                return true; // Kasa/Satış işlemi, muhasebeye dahil et
+            })
+
             // --- HESAPLAMALAR ---
 
-            // A. Ciro (Revenue) - Sadece 'purchase' işlemleri
+            // A. Ciro (Revenue) - Sadece 'purchase' işlemleri (KASA/SATIŞ'tan yapılanlar)
+            // amount negatif olabilir, mutlak değer al (ciro pozitif olmalı)
             const totalRevenue = transactions
                 .filter(t => t.transaction_type === 'purchase')
-                .reduce((sum, t) => sum + (t.amount || 0), 0)
+                .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0)
 
             // A.1. Bakiye Yüklemeleri (Deposit) - Muhasebe için
             const totalDeposits = transactions
@@ -482,24 +505,42 @@ export default function CanteenDashboard() {
             const productProfitMap = new Map<string, number>() // Ürün adı -> Toplam kâr
 
             transactions.forEach(t => {
-                if (t.items_json && Array.isArray(t.items_json)) {
-                    t.items_json.forEach((item: any) => {
-                        const buyingPrice = item.buying_price || 0
-                        const sellingPrice = item.selling_price || 0
-                        const quantity = item.quantity || 1
-                        totalCost += buyingPrice * quantity
-
-                        // Ürün Satış Adetlerini Topla (Top 5 için)
-                        const currentQty = productSalesMap.get(item.name) || 0
-                        productSalesMap.set(item.name, currentQty + quantity)
-
-                        // Ürün Kârını Topla (En Çok Kâr Getirenler için)
-                        const profitPerUnit = sellingPrice - buyingPrice
-                        const totalProfit = profitPerUnit * quantity
-                        const currentProfit = productProfitMap.get(item.name) || 0
-                        productProfitMap.set(item.name, currentProfit + totalProfit)
-                    })
+                // items_json array veya obje olabilir
+                let items: any[] = []
+                
+                if (Array.isArray(t.items_json)) {
+                    items = t.items_json
+                } else if (t.items_json && typeof t.items_json === 'object') {
+                    // Eğer items_json bir obje ise ve items array'i varsa
+                    if (t.items_json.items && Array.isArray(t.items_json.items)) {
+                        items = t.items_json.items
+                    } else {
+                        // Direkt obje ise (eski format), tek item olarak işle
+                        items = [t.items_json]
+                    }
                 }
+                
+                items.forEach((item: any) => {
+                    // Sadece KASA/SATIŞ işlemlerini işle (source kontrolü)
+                    if (item.source === 'MOBİL_SİPARİŞ') {
+                        return; // Sipariş teslim işlemi, atla
+                    }
+                    
+                    const buyingPrice = item.buying_price || item.buy_price || 0
+                    const sellingPrice = item.selling_price || item.sell_price || 0
+                    const quantity = item.quantity || 1
+                    totalCost += buyingPrice * quantity
+
+                    // Ürün Satış Adetlerini Topla (Top 5 için)
+                    const currentQty = productSalesMap.get(item.name) || 0
+                    productSalesMap.set(item.name, currentQty + quantity)
+
+                    // Ürün Kârını Topla (En Çok Kâr Getirenler için)
+                    const profitPerUnit = sellingPrice - buyingPrice
+                    const totalProfit = profitPerUnit * quantity
+                    const currentProfit = productProfitMap.get(item.name) || 0
+                    productProfitMap.set(item.name, currentProfit + totalProfit)
+                })
             })
 
             // C. Toplam Gider

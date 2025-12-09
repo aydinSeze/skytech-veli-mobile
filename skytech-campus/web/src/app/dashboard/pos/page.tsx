@@ -123,12 +123,18 @@ export default function POSPage() {
                 await supabase.from('products').update({ stock_quantity: newStock }).eq('id', item.id)
             }
 
+            // Kasa/Satış işlemi - items_json içine source ekle (muhasebe filtresi için)
+            const cartWithSource = cart.map(item => ({
+                ...item,
+                source: 'KASA_SATIŞ' // Muhasebe filtresi için
+            }))
+
             await supabase.from('transactions').insert([{
                 canteen_id: selectedCanteen, 
                 student_id: student.id, 
                 amount: -cartTotal, 
                 transaction_type: 'purchase', 
-                items_json: cart,
+                items_json: cartWithSource, // source: 'KASA_SATIŞ' ile
                 previous_balance: previousBalance,
                 new_balance: newBalance
             }])

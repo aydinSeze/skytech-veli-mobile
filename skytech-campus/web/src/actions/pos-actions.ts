@@ -219,15 +219,23 @@ export async function processPayment(cardId: string, cartItems: any[], userSchoo
             }
         }
 
-        // 7. İşlemi Kaydet
+        // 7. İşlemi Kaydet (KASA/SATIŞ - Muhasebeye yansıyacak)
+        // items_json içine source ekle (muhasebe filtresi için)
+        const cartWithSource = verifiedCart.map(item => ({
+            ...item,
+            source: 'KASA_SATIŞ' // Muhasebe filtresi için
+        }))
+
         await supabase.from('transactions').insert([{
-            canteen_id: canteenId || null,
+            canteen_id: canteenId || null, // KASA/SATIŞ işlemleri için canteen_id MUTLAKA olmalı
             student_id: customerType === 'student' ? customer.id : null,
             personnel_id: customerType === 'personnel' ? customer.id : null,
-            amount: calculatedTotal,
+            amount: -calculatedTotal, // Negatif (bakiye düşüşü)
             transaction_type: 'purchase',
-            items_json: verifiedCart,
-            school_id: userSchoolId
+            items_json: cartWithSource, // source: 'KASA_SATIŞ' ile
+            school_id: userSchoolId,
+            previous_balance: currentBalance,
+            new_balance: newBalance
         }])
 
         revalidatePath('/canteen/pos')
