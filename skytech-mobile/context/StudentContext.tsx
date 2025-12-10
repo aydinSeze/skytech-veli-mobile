@@ -46,9 +46,18 @@ export function StudentProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     setStudent(null);
     try {
+      // Önce beni hatırla tercihini kontrol et
+      const rememberMeValue = await AsyncStorage.getItem('@skytech:remember_access_code');
+
+      // Öğrenci verisini sil (Session verisi)
       await AsyncStorage.removeItem(STUDENT_STORAGE_KEY);
-      await AsyncStorage.removeItem('@skytech:saved_access_code');
-      await AsyncStorage.removeItem('@skytech:remember_access_code');
+
+      // Eğer "Beni Hatırla" seçili DEĞİLSE, kayıtlı kodu da sil
+      // Seçiliyse, kod kalsın ki login ekranında otomatik dolsun
+      if (rememberMeValue !== 'true') {
+        await AsyncStorage.removeItem('@skytech:saved_access_code');
+        await AsyncStorage.removeItem('@skytech:remember_access_code');
+      }
     } catch (error) {
       console.error('Çıkış yapılırken hata:', error);
     }
