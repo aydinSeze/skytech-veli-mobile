@@ -81,3 +81,4 @@ EXISTS (
 5. Supabase Dashboard -> Logs -> API Logs'tan detaylı hata mesajlarını inceleyin
 
 
+

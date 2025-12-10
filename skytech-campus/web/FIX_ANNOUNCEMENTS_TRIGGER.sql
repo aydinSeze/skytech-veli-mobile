@@ -38,3 +38,4 @@ EXECUTE FUNCTION ensure_single_active_announcement();
 -- ============================================
 
 
+

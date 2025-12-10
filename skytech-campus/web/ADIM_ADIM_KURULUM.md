@@ -138,3 +138,4 @@ Tüm adımları yaptıysanız ve hala çalışmıyorsa:
 3. Supabase Dashboard -> Logs -> API Logs'tan detaylı hata mesajlarını kontrol edin
 
 
+

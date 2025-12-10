@@ -173,3 +173,4 @@ WHERE u.email = 'BURAYA_EMAILINIZI_YAZIN';  -- ÖRN: 'aydinSezerr@outlook.com'
 -- ============================================
 
 
+

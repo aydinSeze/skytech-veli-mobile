@@ -56,3 +56,4 @@ ALTER TABLE public.canteens ENABLE ROW LEVEL SECURITY;
 -- ============================================
 
 
+

@@ -21,3 +21,4 @@ COMMIT;
 -- Artık transaction'lar sipariş ID'si ile ilişkilendirilebilir
 -- ============================================
 
+

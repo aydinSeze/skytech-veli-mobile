@@ -10,11 +10,11 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
  */
 async function ensureBackupBucket() {
     const supabase = await createClient()
-    
+
     try {
         // Bucket'ı kontrol et
         const { data: buckets, error: listError } = await supabase.storage.listBuckets()
-        
+
         if (listError) {
             console.error('Bucket listesi alınırken hata:', listError)
             // Listeleme başarısız olursa, bucket'ı varsayarak devam et
@@ -23,7 +23,7 @@ async function ensureBackupBucket() {
 
         // 'backups' bucket'ı var mı kontrol et
         const backupBucket = buckets?.find(b => b.name === 'backups')
-        
+
         if (backupBucket) {
             return { success: true, bucketExists: true, bucket: backupBucket }
         }
@@ -50,8 +50,8 @@ async function ensureBackupBucket() {
 
                 if (createError) {
                     console.warn('Bucket oluşturulamadı:', createError)
-                    return { 
-                        success: false, 
+                    return {
+                        success: false,
                         bucketExists: false,
                         error: 'backups bucket bulunamadı ve oluşturulamadı. Lütfen Supabase Dashboard\'dan manuel olarak oluşturun: Storage -> New bucket -> Name: "backups", Public: false',
                         needsManualSetup: true
@@ -65,11 +65,13 @@ async function ensureBackupBucket() {
         }
 
         // Service role key yoksa veya oluşturma başarısız olursa
-        return { 
-            success: false, 
+        // Service role key yoksa veya oluşturma başarısız olursa
+        // Bucket var ama listelenemiyor olabilir (RLS yüzünden). Hatayı yut ve devam et.
+        console.warn('Backups bucket listede bulunamadı, ancak var olduğu varsayılarak devam ediliyor.')
+        return {
+            success: true,
             bucketExists: false,
-            error: 'backups bucket bulunamadı. Lütfen Supabase Dashboard\'dan manuel olarak oluşturun: Storage -> New bucket -> Name: "backups", Public: false',
-            needsManualSetup: true
+            message: 'Bucket kontrolü: Listede görünmüyor, varsayılan olarak devam ediliyor.'
         }
     } catch (error: any) {
         console.error('Bucket kontrolü hatası:', error)
@@ -83,7 +85,7 @@ async function ensureBackupBucket() {
  */
 async function getLastBackupDate(): Promise<string | null> {
     const supabase = await createClient()
-    
+
     try {
         const { data, error } = await supabase
             .from('system_settings')
@@ -108,7 +110,7 @@ async function getLastBackupDate(): Promise<string | null> {
  */
 async function setLastBackupDate(date: string) {
     const supabase = await createClient()
-    
+
     try {
         // Önce var mı kontrol et
         const { data: existing } = await supabase
@@ -184,7 +186,7 @@ export async function isBackupDoneToday(): Promise<boolean> {
  */
 async function backupSchoolData(schoolId: string) {
     const supabase = await createClient()
-    
+
     try {
         // Tüm verileri çek
         const [studentsResult, ordersResult, transactionsResult, productsResult] = await Promise.all([
@@ -259,7 +261,7 @@ async function backupSchoolData(schoolId: string) {
  */
 async function cleanupOldBackups(schoolId: string) {
     const supabase = await createClient()
-    
+
     try {
         // Okul klasöründeki tüm dosyaları listele
         const { data: files, error: listError } = await supabase.storage
@@ -285,7 +287,7 @@ async function cleanupOldBackups(schoolId: string) {
 
         // Eski dosyaları bul ve sil (dosya adı YYYY-MM-DD.json formatında)
         const filesToDelete: string[] = []
-        
+
         for (const file of files) {
             // Dosya adından tarihi çıkar (YYYY-MM-DD.json -> YYYY-MM-DD)
             const fileDate = file.name.replace('.json', '')
@@ -325,7 +327,7 @@ export async function backupAllSchools(): Promise<{ success: boolean; message: s
     try {
         // 1. Önce bugün yedekleme yapılmış mı kontrol et
         const { shouldRun, lastBackupDate } = await shouldRunBackup()
-        
+
         if (!shouldRun) {
             return {
                 success: true,
@@ -380,7 +382,7 @@ export async function backupAllSchools(): Promise<{ success: boolean; message: s
             try {
                 // Yedekleme yap
                 const backupResult = await backupSchoolData(school.id)
-                
+
                 if (backupResult.success) {
                     successCount++
                     // Eski yedekleri temizle
@@ -406,7 +408,7 @@ export async function backupAllSchools(): Promise<{ success: boolean; message: s
         }
 
         revalidatePath('/dashboard')
-        
+
         return {
             success: errorCount === 0,
             message,
@@ -431,7 +433,7 @@ export async function backupAllSchools(): Promise<{ success: boolean; message: s
  */
 export async function getSchoolBackups(schoolId: string): Promise<{ success: boolean; backups?: any[]; error?: string }> {
     const supabase = await createClient()
-    
+
     try {
         // Okul klasöründeki tüm dosyaları listele
         const { data: files, error: listError } = await supabase.storage
@@ -473,10 +475,10 @@ export async function getSchoolBackups(schoolId: string): Promise<{ success: boo
  */
 export async function downloadBackupFile(schoolId: string, fileName: string): Promise<{ data?: any; error?: string }> {
     const supabase = await createClient()
-    
+
     try {
         const filePath = `${schoolId}/${fileName}`
-        
+
         // Dosyayı indir
         const { data, error: downloadError } = await supabase.storage
             .from('backups')
@@ -503,7 +505,7 @@ export async function downloadBackupFile(schoolId: string, fileName: string): Pr
  */
 export async function restoreBackupData(schoolId: string, fileName: string): Promise<{ success: boolean; error?: string }> {
     const supabase = await createClient()
-    
+
     try {
         // 1. Yedek dosyasını indir
         const filePath = `${schoolId}/${fileName}`
@@ -543,7 +545,7 @@ export async function restoreBackupData(schoolId: string, fileName: string): Pro
                     console.error('Öğrenciler geri yüklenirken hata:', studentsError)
                 }
             }
-            
+
             if (backupData.data.orders?.length > 0) {
                 const { error: ordersError } = await supabase
                     .from('orders')
@@ -552,7 +554,7 @@ export async function restoreBackupData(schoolId: string, fileName: string): Pro
                     console.error('Siparişler geri yüklenirken hata:', ordersError)
                 }
             }
-            
+
             if (backupData.data.transactions?.length > 0) {
                 const { error: transactionsError } = await supabase
                     .from('transactions')
@@ -561,7 +563,7 @@ export async function restoreBackupData(schoolId: string, fileName: string): Pro
                     console.error('İşlemler geri yüklenirken hata:', transactionsError)
                 }
             }
-            
+
             if (backupData.data.products?.length > 0) {
                 const { error: productsError } = await supabase
                     .from('products')
@@ -573,7 +575,7 @@ export async function restoreBackupData(schoolId: string, fileName: string): Pro
         }
 
         revalidatePath('/dashboard/schools')
-        
+
         return { success: true }
     } catch (error: any) {
         console.error('Geri yükleme hatası:', error)
