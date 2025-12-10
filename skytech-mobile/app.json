@@ -21,9 +21,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
       },
-      "package": "com.aydinsezerr.skytechmobile",
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "package": "com.aydinsezerr.skytechmobile"
     },
     "web": {
       "favicon": "./assets/icon.png",
