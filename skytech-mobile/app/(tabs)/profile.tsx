@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -29,25 +30,41 @@ export default function ProfileScreen() {
   const [kvkkModalVisible, setKvkkModalVisible] = useState(false);
 
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Çıkış Yap',
-      'Çıkış yapmak istediğinize emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Çıkış Yap',
-          style: 'destructive',
-          onPress: async () => {
-            logout();
-            router.replace('/login');
+  const handleLogout = async () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Çıkış yapmak istediğinize emin misiniz?');
+      if (confirmed) {
+        await logout();
+        router.replace('/login');
+      }
+    } else {
+      Alert.alert(
+        'Çıkış Yap',
+        'Çıkış yapmak istediğinize emin misiniz?',
+        [
+          { text: 'İptal', style: 'cancel' },
+          {
+            text: 'Çıkış Yap',
+            style: 'destructive',
+            onPress: async () => {
+              await logout();
+              router.replace('/login');
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
-  const menuItems = [
+  type MenuItem = {
+    id: number;
+    title: string;
+    icon: any;
+    onPress: () => void;
+    badge?: number;
+  };
+
+  const menuItems: MenuItem[] = [
     { id: 1, title: 'Kullanıcı Sözleşmesi', icon: FileText, onPress: () => setUserAgreementModalVisible(true) },
     { id: 2, title: 'Dış Bağlantılar ve Reklam Politikası', icon: ExternalLink, onPress: () => setExternalLinksModalVisible(true) },
     { id: 3, title: 'Gizlilik ve KVKK', icon: Lock, onPress: () => setKvkkModalVisible(true) },

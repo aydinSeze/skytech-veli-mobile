@@ -13,7 +13,7 @@ type StudentContextType = {
   student: Student | null;
   setStudent: (student: Student | null) => void;
   isLoading: boolean;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 const StudentContext = createContext<StudentContextType | undefined>(undefined);
