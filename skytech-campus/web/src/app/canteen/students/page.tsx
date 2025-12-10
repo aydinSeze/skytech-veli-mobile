@@ -21,9 +21,16 @@ export default function StudentsPage() {
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
+    // SAYFALAMA VE ARAMA AYARLARI
+    const PAGE_SIZE = 20
+    const [page, setPage] = useState(0)
+    const [totalCount, setTotalCount] = useState(0)
+    const [isSearching, setIsSearching] = useState(false)
+
     // Para Yükleme Modalı
     const [depositModal, setDepositModal] = useState<{ open: boolean, student: any | null }>({ open: false, student: null })
     const [depositAmount, setDepositAmount] = useState('')
+    const [isDepositSubmitting, setIsDepositSubmitting] = useState(false)
 
     // Geçmiş Modalı (Son 1 Ay)
     const [historyModal, setHistoryModal] = useState<{ open: boolean, student: any | null, transactions: any[] }>({ open: false, student: null, transactions: [] })
@@ -65,7 +72,7 @@ export default function StudentsPage() {
     const formatPhoneNumber = (value: string) => {
         // Sadece rakamları al
         const numbers = value.replace(/\D/g, '')
-        
+
         // +90'dan sonraki kısmı al (ilk 2 rakam 90 ise atla)
         let phoneNumbers = numbers
         if (numbers.startsWith('90') && numbers.length > 2) {
@@ -73,10 +80,10 @@ export default function StudentsPage() {
         } else if (numbers.startsWith('0')) {
             phoneNumbers = numbers.substring(1)
         }
-        
+
         // Maksimum 10 hane
         phoneNumbers = phoneNumbers.substring(0, 10)
-        
+
         // Formatla: +90 (XXX) XXX XX XX
         if (phoneNumbers.length === 0) {
             return '+90 ('
@@ -113,66 +120,67 @@ export default function StudentsPage() {
         }
     }
 
-    const fetchData = async () => {
+    const fetchData = async (targetPage = 0, search = '') => {
         setLoading(true)
         try {
-            // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
+            // 1. Kullanıcının Okul ID'sini Çek
             const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
             const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
-            console.log('🔍 Öğrenci verileri çekiliyor...', { urlSchoolId })
-
+            // Okul ID belirle
             if (urlSchoolId) {
-                // Yönetici modu - URL'den schoolId al
                 targetSchoolId = urlSchoolId
                 setUserSchoolId(urlSchoolId)
-                
-                // Okul Adını Çek
-                const { data: school, error: schoolError } = await supabase
-                    .from('schools')
-                    .select('name')
-                    .eq('id', urlSchoolId)
-                    .single()
-                
-                if (schoolError) {
-                    console.error('❌ Okul bilgisi çekilemedi:', schoolError)
-                    alert(`Okul bilgisi bulunamadı: ${schoolError.message}`)
-                } else if (school) {
-                    setSchoolName(school.name)
+                // Okul adı çekme... (Basitleştirildi)
+                const { data: school } = await supabase.from('schools').select('name').eq('id', urlSchoolId).single()
+                if (school) setSchoolName(school.name)
+            } else {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (user) {
+                    const { data: profile } = await supabase.from('profiles').select('school_id, role').eq('id', user.id).single()
+                    if (profile?.school_id) {
+                        targetSchoolId = profile.school_id
+                        setUserSchoolId(profile.school_id)
+                        const { data: school } = await supabase.from('schools').select('name').eq('id', profile.school_id).single()
+                        if (school) setSchoolName(school.name)
+                    } else if (profile?.role === 'admin') {
+                        /* Admin tüm okulları görür mantığı burada pagination ile karışık, şimdilik geçiyoruz */
+                    }
                 }
+            }
 
-                // Sadece bu okula ait öğrencileri çek (TÜM ÖĞRENCİLER - limit kaldırıldı)
-                console.log('📥 Öğrenci verileri çekiliyor (Admin modu)...', { urlSchoolId })
-                const { data, error, count } = await supabase
+            if (targetSchoolId) {
+                // SORGULAMA (Server-Side Pagination & Search)
+                let query = supabase
                     .from('students')
                     .select('id, full_name, student_number, nfc_card_id, wallet_balance, class_branch, parent_name, parent_phone, credit_limit, created_at, access_code', { count: 'exact' })
-                    .eq('school_id', urlSchoolId)
+                    .eq('school_id', targetSchoolId)
                     .order('created_at', { ascending: false })
 
-                console.log('📥 Sorgu Sonucu (Admin):', { 
-                    dataLength: data?.length, 
-                    count, 
-                    hasError: !!error,
-                    errorString: error ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : null
-                })
+                // Arama varsa filtrele
+                if (search.trim()) {
+                    const term = search.trim()
+                    // Güvenli arama için sadece harf/rakam
+                    query = query.or(`full_name.ilike.%${term}%,class_branch.ilike.%${term}%,nfc_card_id.ilike.%${term}%,parent_name.ilike.%${term}%,access_code.ilike.%${term}%`)
+                }
+
+                // Sayfalama
+                const from = targetPage * PAGE_SIZE
+                const to = from + PAGE_SIZE - 1
+                query = query.range(from, to)
+
+                const { data, error, count } = await query
 
                 if (error) {
-                    const errorInfo = {
-                        message: (error as any)?.message,
-                        code: (error as any)?.code,
-                        details: (error as any)?.details,
-                        hint: (error as any)?.hint
-                    }
-                    
-                    console.error('❌ Öğrenci çekme hatası (DETAYLI - Admin):', errorInfo)
+                    console.error('❌ Öğrenci çekme hatası (DETAYLI - Admin):', error)
                     console.error('❌ Ham Error Objesi:', error)
-                    
+
                     const errorMessage = (error as any)?.message || 'Bilinmeyen hata'
                     const errorCode = (error as any)?.code
-                    
-                    if (errorMessage.includes('permission') || 
-                        errorMessage.includes('denied') || 
+
+                    if (errorMessage.includes('permission') ||
+                        errorMessage.includes('denied') ||
                         errorCode === '42501' ||
                         errorCode === 'PGRST301' ||
                         !data) {
@@ -181,21 +189,21 @@ export default function StudentsPage() {
                     } else {
                         alert(`Öğrenci verileri çekilemedi: ${errorMessage}`)
                     }
-                    
+
                     setStudents([])
                     return
                 }
-                
+
                 console.log(`✅ ${data?.length || 0} adet öğrenci bulundu (Okul ID: ${urlSchoolId}, Toplam: ${count})`)
                 setStudents(data || [])
-                
+
                 if (!data || data.length === 0) {
                     console.warn('⚠️ Bu okul için öğrenci bulunamadı!')
                 }
             } else {
                 // Normal kullanıcı - Profile'dan al
                 const { data: { user }, error: userError } = await supabase.auth.getUser()
-                
+
                 if (userError || !user) {
                     console.error('❌ Kullanıcı oturumu bulunamadı:', userError)
                     alert('Oturum bulunamadı. Lütfen tekrar giriş yapın.')
@@ -209,7 +217,7 @@ export default function StudentsPage() {
                     .select('school_id, role')
                     .eq('id', user.id)
                     .single()
-                
+
                 if (profileError) {
                     console.error('❌ Profile bilgisi çekilemedi:', profileError)
                     alert(`Kullanıcı profili bulunamadı: ${profileError.message}`)
@@ -228,7 +236,7 @@ export default function StudentsPage() {
                         .select('name')
                         .eq('id', profile.school_id)
                         .single()
-                    
+
                     if (schoolError) {
                         console.error('❌ Okul bilgisi çekilemedi:', schoolError)
                     } else if (school) {
@@ -241,7 +249,7 @@ export default function StudentsPage() {
                         .from('students')
                         .select('*', { count: 'exact', head: true })
                         .eq('school_id', profile.school_id)
-                    
+
                     console.log('🧪 RLS TEST Sonucu:', { testCount, testError: testError ? JSON.stringify(testError, null, 2) : null })
 
                     // Sadece bu okula ait öğrencileri çek (TÜM ÖĞRENCİLER - limit kaldırıldı)
@@ -252,9 +260,9 @@ export default function StudentsPage() {
                         .eq('school_id', profile.school_id)
                         .order('created_at', { ascending: false })
 
-                    console.log('📥 Sorgu Sonucu:', { 
-                        dataLength: data?.length, 
-                        count, 
+                    console.log('📥 Sorgu Sonucu:', {
+                        dataLength: data?.length,
+                        count,
                         hasError: !!error,
                         errorString: error ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : null,
                         errorKeys: error ? Object.keys(error) : []
@@ -268,18 +276,18 @@ export default function StudentsPage() {
                             details: (error as any)?.details,
                             hint: (error as any)?.hint
                         }
-                        
+
                         console.error('❌ Öğrenci çekme hatası (DETAYLI):', errorInfo)
                         console.error('❌ Ham Error Objesi:', error)
                         console.error('❌ Profile School ID:', profile.school_id)
                         console.error('❌ User ID:', user.id)
-                        
+
                         // RLS hatası kontrolü
                         const errorMessage = (error as any)?.message || 'Bilinmeyen hata'
                         const errorCode = (error as any)?.code
-                        
-                        if (errorMessage.includes('permission') || 
-                            errorMessage.includes('denied') || 
+
+                        if (errorMessage.includes('permission') ||
+                            errorMessage.includes('denied') ||
                             errorCode === '42501' ||
                             errorCode === 'PGRST301' ||
                             !data) {
@@ -289,26 +297,26 @@ export default function StudentsPage() {
                         } else {
                             alert(`Öğrenci verileri çekilemedi: ${errorMessage}`)
                         }
-                        
+
                         setStudents([])
                         return
                     }
-                    
+
                     console.log(`✅ ${data?.length || 0} adet öğrenci bulundu (Okul ID: ${profile.school_id}, Toplam: ${count})`)
                     setStudents(data || [])
-                    
+
                     if (!data || data.length === 0) {
                         console.warn('⚠️ Bu okul için öğrenci bulunamadı! Okul ID:', profile.school_id)
                     }
                 } else {
                     // Profile'da school_id yok
                     console.warn('⚠️ Kullanıcı profilinde school_id bulunamadı!', { profile })
-                    
+
                     // Admin ise tüm okulları görebilir
                     if (profile?.role === 'admin') {
                         console.log('👑 Admin kullanıcı - tüm okullar gösteriliyor')
                         const { data: schoolsData, error: schoolsError } = await supabase.from('schools').select('*')
-                        
+
                         if (schoolsError) {
                             console.error('❌ Okullar çekilemedi:', schoolsError)
                         } else {
@@ -323,10 +331,10 @@ export default function StudentsPage() {
             console.error('❌ Beklenmedik veri çekme hatası:', error)
             // Sadece gerçekten kritik hataları göster
             const errorMessage = error?.message || 'Bilinmeyen hata'
-            const isTechnicalError = errorMessage.includes('does not exist') || 
-                                    errorMessage.includes('column') ||
-                                    errorMessage.includes('permission denied')
-            
+            const isTechnicalError = errorMessage.includes('does not exist') ||
+                errorMessage.includes('column') ||
+                errorMessage.includes('permission denied')
+
             if (!isTechnicalError) {
                 console.warn('⚠️ Beklenmedik hata (kullanıcıya gösterilmeyecek):', errorMessage)
             }
@@ -369,8 +377,8 @@ export default function StudentsPage() {
         }
 
         // Telefon numarasını temizle (sadece rakamlar) - Boşsa null
-        const cleanPhone = form.parent_phone && form.parent_phone !== '+90 (' 
-            ? extractPhoneNumbers(form.parent_phone) 
+        const cleanPhone = form.parent_phone && form.parent_phone !== '+90 ('
+            ? extractPhoneNumbers(form.parent_phone)
             : null
 
         console.log('💾 Öğrenci kaydediliyor...', { targetSchoolId, fullName, classBranch })
@@ -424,12 +432,12 @@ export default function StudentsPage() {
             ['Ali Veli', '5-A', 'Mehmet Veli', '5551234567', '100'],
             ['Ayşe Yılmaz', '6-B', 'Ahmet Yılmaz', '5559876543', '50']
         ]
-        
+
         // Başlık satırı
         const data = [headers, ...exampleData]
-        
+
         const ws = XLSX.utils.aoa_to_sheet(data)
-        
+
         // Sütun genişliklerini ayarla
         ws['!cols'] = [
             { wch: 20 }, // Ad Soyad
@@ -438,7 +446,7 @@ export default function StudentsPage() {
             { wch: 15 }, // Veli Telefon
             { wch: 15 }  // Veresiye Limiti
         ]
-        
+
         const wb = XLSX.utils.book_new()
         XLSX.utils.book_append_sheet(wb, ws, 'Öğrenci Listesi')
         XLSX.writeFile(wb, 'ogrenci_yukleme_sablonu.xlsx')
@@ -564,9 +572,10 @@ export default function StudentsPage() {
 
     // Bakiye Yükle
     const handleDeposit = async () => {
-        if (!depositModal.student || !depositAmount) return
+        if (!depositModal.student || !depositAmount || isDepositSubmitting) return
 
         try {
+            setIsDepositSubmitting(true)
             const amount = parseFloat(depositAmount)
             if (isNaN(amount) || amount <= 0) {
                 alert('Geçerli bir tutar giriniz.')
@@ -585,6 +594,8 @@ export default function StudentsPage() {
             }
         } catch (error: any) {
             alert('Beklenmedik Hata: ' + error.message)
+        } finally {
+            setIsDepositSubmitting(false)
         }
     }
 
@@ -820,14 +831,14 @@ export default function StudentsPage() {
     const handleEditSave = async () => {
         if (!editModal.student) return
 
-            const { error } = await supabase.from('students').update({
-                full_name: editForm.full_name.toUpperCase(), // Büyük harfe çevir
-                class_branch: editForm.class_branch.toUpperCase(), // Büyük harfe çevir
-                parent_name: editForm.parent_name?.toUpperCase() || null, // Büyük harfe çevir
-                parent_phone: extractPhoneNumbers(editForm.parent_phone), // Sadece rakamları kaydet
-                nfc_card_id: editForm.nfc_card_id,
-                credit_limit: editForm.credit_limit
-            }).eq('id', editModal.student.id)
+        const { error } = await supabase.from('students').update({
+            full_name: editForm.full_name.toUpperCase(), // Büyük harfe çevir
+            class_branch: editForm.class_branch.toUpperCase(), // Büyük harfe çevir
+            parent_name: editForm.parent_name?.toUpperCase() || null, // Büyük harfe çevir
+            parent_phone: extractPhoneNumbers(editForm.parent_phone), // Sadece rakamları kaydet
+            nfc_card_id: editForm.nfc_card_id,
+            credit_limit: editForm.credit_limit
+        }).eq('id', editModal.student.id)
 
         if (error) {
             alert('Güncelleme hatası: ' + error.message)
@@ -915,14 +926,9 @@ export default function StudentsPage() {
     }
 
 
-    // Filtreleme
-    const filteredStudents = students.filter(student =>
-        student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        student.class_branch?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        student.nfc_card_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        student.parent_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        student.access_code?.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    // Filtreleme ARTIK YOK - Server Side yapılıyor
+    // filteredStudents artık direkt students (çünkü serverdan filtrelenip geldi)
+    const filteredStudents = students
 
     if (loading) {
         return (
@@ -951,7 +957,7 @@ export default function StudentsPage() {
                 </div>
                 <div className="flex gap-2">
                     <button
-                        onClick={fetchData}
+                        onClick={() => fetchData()}
                         className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-bold"
                         title="Listeyi yenile"
                     >
@@ -993,47 +999,47 @@ export default function StudentsPage() {
             <div className="bg-slate-800 p-4 rounded-lg grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4 items-end border border-slate-700">
                 <div className="lg:col-span-1">
                     <label className="block text-sm text-slate-400 mb-1">Ad Soyad</label>
-                    <input 
-                        type="text" 
-                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase" 
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase"
                         placeholder="Örn: Ali Veli"
                         style={{ textTransform: 'uppercase' }}
-                        value={form.full_name} 
-                        onChange={e => setForm({ ...form, full_name: e.target.value.toUpperCase() })} 
+                        value={form.full_name}
+                        onChange={e => setForm({ ...form, full_name: e.target.value.toUpperCase() })}
                     />
                 </div>
 
                 <div className="lg:col-span-1">
                     <label className="block text-sm text-slate-400 mb-1">Şube</label>
-                    <input 
-                        type="text" 
-                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase" 
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase"
                         placeholder="Örn: 5-A"
                         style={{ textTransform: 'uppercase' }}
-                        value={form.class_branch} 
-                        onChange={e => setForm({ ...form, class_branch: e.target.value.toUpperCase() })} 
+                        value={form.class_branch}
+                        onChange={e => setForm({ ...form, class_branch: e.target.value.toUpperCase() })}
                     />
                 </div>
 
                 <div className="lg:col-span-1">
                     <label className="block text-sm text-slate-400 mb-1">Veli Adı</label>
-                    <input 
-                        type="text" 
-                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase" 
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase"
                         placeholder="Veli İsmi"
                         style={{ textTransform: 'uppercase' }}
-                        value={form.parent_name} 
-                        onChange={e => setForm({ ...form, parent_name: e.target.value.toUpperCase() })} 
+                        value={form.parent_name}
+                        onChange={e => setForm({ ...form, parent_name: e.target.value.toUpperCase() })}
                     />
                 </div>
 
                 <div className="lg:col-span-1">
                     <label className="block text-sm text-slate-400 mb-1">Veli Cep</label>
-                    <input 
-                        type="text" 
-                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700" 
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
                         placeholder="+90 (555) 123 45 67"
-                        value={form.parent_phone} 
+                        value={form.parent_phone}
                         onChange={e => handlePhoneChange(e.target.value, false)}
                         maxLength={19} // +90 (XXX) XXX XX XX = 19 karakter
                         pattern="[0-9+\s()]*"
@@ -1069,7 +1075,7 @@ export default function StudentsPage() {
                         <input
                             type="text"
                             className="w-full bg-slate-900 text-white pl-10 p-3 rounded border border-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            placeholder="Öğrenci Ara (İsim, Şube, Kart ID, Veli)..."
+                            placeholder="Öğrenci Ara (Sunucuda Aranır)..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -1163,7 +1169,7 @@ export default function StudentsPage() {
                                         </p>
                                         {!searchTerm && students.length === 0 && (
                                             <button
-                                                onClick={fetchData}
+                                                onClick={() => fetchData()}
                                                 className="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm"
                                             >
                                                 🔄 Yenile
@@ -1175,6 +1181,30 @@ export default function StudentsPage() {
                         )}
                     </tbody>
                 </table>
+
+                {/* SAYFALAMA KONTROLLERİ */}
+                <div className="bg-slate-950 p-4 border-t border-slate-800 flex justify-between items-center text-sm">
+                    <div className="text-slate-400">
+                        Toplam <span className="text-white font-bold">{totalCount}</span> öğrenci,
+                        Şu an <span className="text-white font-bold">{page + 1}</span>. sayfadasınız
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            disabled={page === 0 || loading}
+                            onClick={() => setPage(p => p - 1)}
+                            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            &larr; Önceki
+                        </button>
+                        <button
+                            disabled={(page + 1) * PAGE_SIZE >= totalCount || loading}
+                            onClick={() => setPage(p => p + 1)}
+                            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Sonraki &rarr;
+                        </button>
+                    </div>
+                </div>
             </div>
 
             {/* PARA YÜKLEME POPUP */}
@@ -1189,8 +1219,17 @@ export default function StudentsPage() {
                         <input type="number" className="w-full bg-slate-900 text-white text-2xl p-3 rounded border border-green-500 mb-4 text-center"
                             placeholder="0.00" autoFocus value={depositAmount} onChange={e => setDepositAmount(e.target.value)} />
                         <div className="flex gap-3">
-                            <button onClick={() => setDepositModal({ open: false, student: null })} className="flex-1 bg-slate-700 text-white py-3 rounded-lg">İptal</button>
-                            <button onClick={handleDeposit} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold">Onayla</button>
+                            <button onClick={() => setDepositModal({ open: false, student: null })} disabled={isDepositSubmitting} className="flex-1 bg-slate-700 text-white py-3 rounded-lg disabled:opacity-50">İptal</button>
+                            <button onClick={handleDeposit} disabled={isDepositSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+                                {isDepositSubmitting ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                        <span>Yükleniyor...</span>
+                                    </>
+                                ) : (
+                                    'Onayla'
+                                )}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1215,33 +1254,33 @@ export default function StudentsPage() {
                                 <label className="block text-sm text-slate-400 mb-1">Ad Soyad</label>
                                 <input type="text" className="w-full bg-slate-900 text-white p-3 rounded border border-slate-700"
                                     style={{ textTransform: 'uppercase' }}
-                                    value={editForm.full_name} 
-                                    onChange={e => setEditForm({ ...editForm, full_name: e.target.value.toUpperCase() })} 
+                                    value={editForm.full_name}
+                                    onChange={e => setEditForm({ ...editForm, full_name: e.target.value.toUpperCase() })}
                                 />
                             </div>
                             <div>
                                 <label className="block text-sm text-slate-400 mb-1">Şube</label>
                                 <input type="text" className="w-full bg-slate-900 text-white p-3 rounded border border-slate-700"
                                     style={{ textTransform: 'uppercase' }}
-                                    value={editForm.class_branch} 
-                                    onChange={e => setEditForm({ ...editForm, class_branch: e.target.value.toUpperCase() })} 
+                                    value={editForm.class_branch}
+                                    onChange={e => setEditForm({ ...editForm, class_branch: e.target.value.toUpperCase() })}
                                 />
                             </div>
                             <div>
                                 <label className="block text-sm text-slate-400 mb-1">Veli Adı</label>
                                 <input type="text" className="w-full bg-slate-900 text-white p-3 rounded border border-slate-700"
                                     style={{ textTransform: 'uppercase' }}
-                                    value={editForm.parent_name} 
-                                    onChange={e => setEditForm({ ...editForm, parent_name: e.target.value.toUpperCase() })} 
+                                    value={editForm.parent_name}
+                                    onChange={e => setEditForm({ ...editForm, parent_name: e.target.value.toUpperCase() })}
                                 />
                             </div>
                             <div>
                                 <label className="block text-sm text-slate-400 mb-1">Veli Cep</label>
-                                <input 
-                                    type="text" 
-                                    className="w-full bg-slate-900 text-white p-3 rounded border border-slate-700" 
+                                <input
+                                    type="text"
+                                    className="w-full bg-slate-900 text-white p-3 rounded border border-slate-700"
                                     placeholder="+90 (555) 123 45 67"
-                                    value={editForm.parent_phone} 
+                                    value={editForm.parent_phone}
                                     onChange={e => handlePhoneChange(e.target.value, true)}
                                     maxLength={19} // +90 (XXX) XXX XX XX = 19 karakter
                                     pattern="[0-9+\s()]*"

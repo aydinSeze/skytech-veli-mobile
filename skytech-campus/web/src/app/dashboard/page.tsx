@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { getAdminStats, getRevenueReport } from '@/actions/admin-actions'
-import { backupAllSchools, isBackupDoneToday } from '@/actions/backup-actions'
+import { backupNextBatch } from '@/actions/backup-actions'
 import {
     TrendingUp, TrendingDown, School, AlertTriangle,
     DollarSign, Activity, PieChart, ArrowUpRight, Download, Calendar
@@ -45,43 +45,42 @@ export default function AdminDashboard() {
         setReportStartDate(firstDayOfMonth.toISOString().split('T')[0])
         setReportEndDate(today.toISOString().split('T')[0])
 
-        // Günlük yedekleme kontrolü
+        // Günlük yedekleme kontrolü - BATCH SİSTEMİ
         const checkAndBackup = async () => {
+            // 1. Önce ufak bir kontrol (Local Storage veya basit bir state?)
+            // En temizi direkt batch'i çağırmak, o zaten "bugün bittiyse" hemen dönecek.
+
+            let toastId: string | number | null = null
+
             try {
-                const isDone = await isBackupDoneToday()
-                
-                if (!isDone) {
-                    // Bugün yedekleme yapılmamış, sessizce başlat
-                    const toastId = toast.loading('Günlük yedekleme kontrol ediliyor...', {
-                        position: 'top-right'
-                    })
-                    
-                    const result = await backupAllSchools()
-                    
-                    // Toast'ı kapat
-                    toast.dismiss(toastId)
-                    
-                    if (result.success) {
-                        // Başarılı mesajı göster
-                        toast.success(`Tüm okulların günlük yedeği alındı. ${result.successCount || 0} okul başarıyla yedeklendi.`, {
-                            position: 'top-right',
-                            duration: 5000
-                        })
-                    } else {
-                        // Hata mesajı göster
-                        toast.error(result.message || 'Yedekleme sırasında bir hata oluştu.', {
-                            position: 'top-right',
-                            duration: 7000
-                        })
+                const step = async () => {
+                    const result = await backupNextBatch()
+
+                    if (result.completed) {
+                        if (result.remaining === 0 && result.message !== 'Tüm yedeklemeler tamamlandı') {
+                            // Yeni bitti
+                            toast.success('Günlük yedeklemeler tamamlandı! ✅')
+                        }
+                        if (toastId) toast.dismiss(toastId)
+                        return
                     }
+
+                    // Devam ediyor
+                    if (!toastId) {
+                        toastId = toast.loading(`Yedekleme yapılıyor... (Kalan: ${result.remaining + 1} Okul)`)
+                    } else {
+                        // Mesaj güncelleme yok ama kullanıcı görüyor
+                    }
+
+                    // 1 saniye sonra tekrarla
+                    setTimeout(step, 1000)
                 }
-                // Bugün zaten yedekleme yapılmışsa sessizce geç
-            } catch (error: any) {
-                console.error('Yedekleme kontrolü hatası:', error)
-                toast.error('Yedekleme kontrolü sırasında bir hata oluştu.', {
-                    position: 'top-right',
-                    duration: 5000
-                })
+
+                // Başlat
+                step()
+
+            } catch (error) {
+                console.error('Yedekleme hatası:', error)
             }
         }
 
@@ -103,7 +102,7 @@ export default function AdminDashboard() {
         setGeneratingReport(true)
         try {
             const reportData = await getRevenueReport(reportStartDate, reportEndDate)
-            
+
             if (!reportData) {
                 alert('Rapor oluşturulurken bir hata oluştu.')
                 return

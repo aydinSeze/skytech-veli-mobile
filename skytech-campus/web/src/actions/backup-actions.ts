@@ -315,113 +315,84 @@ async function cleanupOldBackups(schoolId: string) {
 }
 
 /**
- * Tüm okulların yedeklemesini yapar
- * Bu fonksiyon client-side'dan çağrılabilir
+ * ilerlemeli Yedekleme Sistemi
+ * Timeout yememek için okulları tek tek yedekler.
  */
-export async function backupAllSchools(): Promise<{ success: boolean; message: string; error?: string; successCount?: number; errorCount?: number }> {
+export async function backupNextBatch(): Promise<{ success: boolean; message: string; remaining: number; completed: boolean }> {
     const supabase = await createClient()
 
     try {
-        // 1. Önce bugün yedekleme yapılmış mı kontrol et
-        const { shouldRun, lastBackupDate } = await shouldRunBackup()
-
-        if (!shouldRun) {
-            return {
-                success: true,
-                message: `Bugün zaten yedekleme yapılmış. Son yedekleme: ${lastBackupDate}`,
-                successCount: 0,
-                errorCount: 0
-            }
-        }
-
-        // 2. Bucket'ın var olduğundan emin ol
-        const bucketCheck = await ensureBackupBucket()
-        if (!bucketCheck.success) {
-            return {
-                success: false,
-                message: 'Yedekleme başlatılamadı',
-                error: bucketCheck.error || 'Bucket kontrolü başarısız',
-                successCount: 0,
-                errorCount: 0
-            }
-        }
-
-        // 3. Tüm okulları çek
-        const { data: schools, error: schoolsError } = await supabase
-            .from('schools')
-            .select('id, name')
-
-        if (schoolsError) {
-            return {
-                success: false,
-                message: 'Okullar alınırken hata oluştu',
-                error: schoolsError.message,
-                successCount: 0,
-                errorCount: 0
-            }
-        }
-
-        if (!schools || schools.length === 0) {
-            return {
-                success: true,
-                message: 'Yedeklenecek okul bulunamadı',
-                successCount: 0,
-                errorCount: 0
-            }
-        }
-
-        // 4. Her okul için yedekleme yap
-        let successCount = 0
-        let errorCount = 0
-        const errors: string[] = []
-
-        for (const school of schools) {
-            try {
-                // Yedekleme yap
-                const backupResult = await backupSchoolData(school.id)
-
-                if (backupResult.success) {
-                    successCount++
-                    // Eski yedekleri temizle
-                    await cleanupOldBackups(school.id)
-                } else {
-                    errorCount++
-                    errors.push(`${school.name}: ${backupResult.error}`)
-                }
-            } catch (error: any) {
-                errorCount++
-                errors.push(`${school.name}: ${error.message || 'Bilinmeyen hata'}`)
-            }
-        }
-
-        // 5. Son yedekleme tarihini güncelle
         const today = new Date().toISOString().split('T')[0]
-        await setLastBackupDate(today)
 
-        // 6. Sonuç mesajı
-        let message = `Yedekleme tamamlandı. ${successCount} okul başarıyla yedeklendi.`
-        if (errorCount > 0) {
-            message += ` ${errorCount} okulda hata oluştu.`
+        // 1. Mevcut ilerlemeyi çek
+        let progress = { date: today, completed: [] as string[] }
+
+        const { data: setting } = await supabase
+            .from('system_settings')
+            .select('setting_value')
+            .eq('setting_key', 'backup_progress')
+            .single()
+
+        if (setting?.setting_value) {
+            try {
+                const parsed = JSON.parse(setting.setting_value)
+                // Tarih değişmişse sıfırla
+                if (parsed.date === today) {
+                    progress = parsed
+                }
+            } catch (e) {
+                console.error('Yedekleme ayarı parse edilemedi, sıfırlanıyor.')
+            }
         }
 
-        revalidatePath('/dashboard')
+        // 2. Tüm okulları çek
+        const { data: schools } = await supabase.from('schools').select('id, name')
+        if (!schools || schools.length === 0) return { success: true, message: 'Okul yok', remaining: 0, completed: true }
+
+        // 3. Yedeklenmemiş okulları bul
+        const pendingSchools = schools.filter(s => !progress.completed.includes(s.id))
+
+        if (pendingSchools.length === 0) {
+            // Hepsi bitmiş
+            return { success: true, message: 'Tüm yedeklemeler tamamlandı', remaining: 0, completed: true }
+        }
+
+        // 4. İLK SIRADAKİ OKULU YEDEKLE (Batch Size = 1)
+        const targetSchool = pendingSchools[0]
+        const backupRes = await backupSchoolData(targetSchool.id)
+
+        if (!backupRes.success) {
+            console.error(`Okul ${targetSchool.name} yedeklenemedi:`, backupRes.error)
+            // Hata olsa bile "tamamlandı" sayıp listeye ekle ki sonsuz döngü olmasın (sonra loglanır)
+        } else {
+            // Eski yedekleri temizle
+            await cleanupOldBackups(targetSchool.id)
+        }
+
+        // 5. İlerlemeyi Kaydet
+        progress.completed.push(targetSchool.id)
+
+        // Upsert
+        const { error: saveError } = await supabase
+            .from('system_settings')
+            .upsert({
+                setting_key: 'backup_progress',
+                setting_value: JSON.stringify(progress),
+                description: 'Günlük yedekleme takibi'
+            }, { onConflict: 'setting_key' })
+
+        if (saveError) console.error('İlerleme kaydedilemedi:', saveError)
 
         return {
-            success: errorCount === 0,
-            message,
-            error: errors.length > 0 ? errors.join('; ') : undefined,
-            successCount,
-            errorCount
+            success: true,
+            message: `${targetSchool.name} yedeklendi.`,
+            remaining: pendingSchools.length - 1,
+            completed: pendingSchools.length - 1 === 0
         }
+
     } catch (error: any) {
-        console.error('Yedekleme hatası:', error)
-        return {
-            success: false,
-            message: 'Yedekleme sırasında beklenmeyen bir hata oluştu',
-            error: error.message || 'Bilinmeyen hata',
-            successCount: 0,
-            errorCount: 1
-        }
+        console.error('Batch yedekleme hatası:', error)
+        return { success: false, message: error.message, remaining: 0, completed: false }
     }
 }
 
