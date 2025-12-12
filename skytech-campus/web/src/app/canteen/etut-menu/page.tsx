@@ -14,16 +14,17 @@ export default function EtutMenuPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-    const [menuItems, setMenuItems] = useState<{ name: string, price: number }[]>([{ name: '', price: 0 }])
+    // YENİ: buying_price ve profit eklendi, price artık satış fiyatı
+    const [menuItems, setMenuItems] = useState<{ name: string, buying_price: number, profit: number, price: number }[]>([{ name: '', buying_price: 0, profit: 0, price: 0 }])
 
     useEffect(() => {
         const fetchData = async () => {
             // URL parametrelerini client-side'da oku (server-safe)
             if (typeof window === 'undefined') return
-            
+
             const urlParams = new URLSearchParams(window.location.search)
             const urlSchoolId = urlParams.get('schoolId')
-            
+
             if (urlSchoolId) {
                 setUserSchoolId(urlSchoolId)
             } else {
@@ -69,7 +70,7 @@ export default function EtutMenuPage() {
 
         const validItems = menuItems.filter(item => item.name.trim() && item.price > 0)
         if (validItems.length === 0) {
-            alert('En az bir yemek ekleyin!')
+            alert('En az bir yemek ekleyin ve satış fiyatını girin!')
             return
         }
 
@@ -77,63 +78,43 @@ export default function EtutMenuPage() {
             const data = {
                 school_id: userSchoolId,
                 menu_date: selectedDate,
-                items_json: validItems, // JSON olarak kaydedilecek
+                items_json: validItems, // JSON olarak kaydedilecek (yeni alanlarla)
                 is_active: true,
                 notification_sent: false
             }
 
             if (editingId) {
-                const { data: updateData, error } = await supabase.from('etut_menu').update(data).eq('id', editingId).select()
-                if (error) {
-                    console.error('Güncelleme hatası (DETAYLI):', {
-                        error,
-                        message: error.message,
-                        code: error.code,
-                        details: error.details,
-                        hint: error.hint,
-                        data: data
-                    })
-                    alert(`Hata: ${error.message || error.code || 'Menü güncellenemedi'}\n\nDetay: ${error.details || error.hint || 'Bilinmeyen hata'}`)
-                    return
-                }
+                const { error } = await supabase.from('etut_menu').update(data).eq('id', editingId)
+                if (error) throw error
             } else {
-                const { data: insertData, error } = await supabase.from('etut_menu').insert([data]).select()
-                if (error) {
-                    console.error('Ekleme hatası (DETAYLI):', {
-                        error,
-                        message: error.message,
-                        code: error.code,
-                        details: error.details,
-                        hint: error.hint,
-                        data: data,
-                        userSchoolId: userSchoolId
-                    })
-                    alert(`Hata: ${error.message || error.code || 'Menü eklenemedi'}\n\nDetay: ${error.details || error.hint || 'Bilinmeyen hata'}\n\nKod: ${error.code || 'N/A'}`)
-                    return
-                }
-                
-                if (!insertData || insertData.length === 0) {
-                    alert('⚠️ Menü eklenemedi: Veritabanı yanıt vermedi. Lütfen SQL dosyasını çalıştırdığınızdan emin olun.')
-                    return
-                }
+                const { error } = await supabase.from('etut_menu').insert([data])
+                if (error) throw error
             }
 
             setIsModalOpen(false)
             setEditingId(null)
-            setMenuItems([{ name: '', price: 0 }])
+            setMenuItems([{ name: '', buying_price: 0, profit: 0, price: 0 }])
             setSelectedDate(new Date().toISOString().split('T')[0])
             await fetchMenus()
             alert('✅ Menü başarıyla kaydedildi!')
         } catch (error: any) {
             console.error('Kaydetme hatası:', error)
-            alert(`Beklenmedik hata: ${error.message || 'Bilinmeyen hata'}`)
+            alert(`Hata: ${error.message || 'Bilinmeyen hata'}`)
         }
     }
 
     const handleEdit = (menu: any) => {
         setEditingId(menu.id)
         setSelectedDate(menu.menu_date)
-        setMenuItems(menu.items_json || [{ name: '', price: 0 }])
+        // Eğer eski veri varsa uyum sağla
+        const items = menu.items_json?.map((item: any) => ({
+            name: item.name,
+            buying_price: item.buying_price || 0,
+            profit: item.profit || 0,
+            price: item.price || 0
+        })) || [{ name: '', buying_price: 0, profit: 0, price: 0 }]
+
+        setMenuItems(items)
         setIsModalOpen(true)
     }
 
@@ -146,12 +127,25 @@ export default function EtutMenuPage() {
 
     const sendNotification = async (menu: any) => {
         if (!confirm('Velilere bildirim göndermek istediğinize emin misiniz?')) return
-        
-        // TODO: Push notification veya SMS entegrasyonu buraya eklenecek
-        // Şimdilik sadece flag'i güncelle
         await supabase.from('etut_menu').update({ notification_sent: true }).eq('id', menu.id)
         alert('✅ Bildirim gönderildi! (Mobil entegrasyon sonrası aktif olacak)')
         fetchMenus()
+    }
+
+    // Kar Hesaplama Yardımcısı
+    const updateItem = (index: number, field: string, value: any) => {
+        const newItems = [...menuItems]
+        const item = { ...newItems[index], [field]: value }
+
+        // Otomatik Kar Hesabı: Kar = Satış - Alış
+        if (field === 'buying_price' || field === 'price') {
+            const buy = field === 'buying_price' ? parseFloat(value) || 0 : item.buying_price
+            const sell = field === 'price' ? parseFloat(value) || 0 : item.price
+            item.profit = parseFloat((sell - buy).toFixed(2))
+        }
+
+        newItems[index] = item
+        setMenuItems(newItems)
     }
 
     if (loading) return <div className="p-10 text-white text-center">Yükleniyor...</div>
@@ -170,7 +164,7 @@ export default function EtutMenuPage() {
                     onClick={() => {
                         setEditingId(null)
                         setSelectedDate(new Date().toISOString().split('T')[0])
-                        setMenuItems([{ name: '', price: 0 }])
+                        setMenuItems([{ name: '', buying_price: 0, profit: 0, price: 0 }])
                         setIsModalOpen(true)
                     }}
                     className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2"
@@ -213,9 +207,13 @@ export default function EtutMenuPage() {
                         </div>
                         <div className="space-y-2">
                             {menu.items_json && Array.isArray(menu.items_json) && menu.items_json.map((item: any, idx: number) => (
-                                <div key={idx} className="flex justify-between text-sm bg-slate-800/50 p-2 rounded">
+                                <div key={idx} className="flex justify-between text-sm bg-slate-800/50 p-2 rounded items-center">
                                     <span className="text-slate-300">{item.name}</span>
-                                    <span className="text-green-400 font-bold">₺{item.price}</span>
+                                    <div className="text-right">
+                                        <div className="text-green-400 font-bold">₺{item.price}</div>
+                                        {/* Sadece display amaçlı kar gösterelim */}
+                                        {item.profit > 0 && <div className="text-[10px] text-slate-500">Kar: ₺{item.profit}</div>}
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -223,18 +221,10 @@ export default function EtutMenuPage() {
                 ))}
             </div>
 
-            {menus.length === 0 && (
-                <div className="text-center py-20">
-                    <Calendar size={64} className="mx-auto text-slate-600 mb-4" />
-                    <h3 className="text-xl font-bold text-white mb-2">Henüz menü yok</h3>
-                    <p className="text-slate-400">Etüt günleri için yemek menüsü oluşturun.</p>
-                </div>
-            )}
-
             {/* MODAL */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-                    <div className="bg-slate-900 p-6 rounded-xl w-full max-w-2xl border border-slate-800 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-slate-900 p-6 rounded-xl w-full max-w-4xl border border-slate-800 max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-xl font-bold text-white">{editingId ? 'Menü Düzenle' : 'Yeni Menü'}</h3>
                             <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white"><X size={24} /></button>
@@ -251,35 +241,53 @@ export default function EtutMenuPage() {
                             </div>
                             <div>
                                 <label className="block text-sm text-slate-400 mb-2">Yemekler</label>
+
+                                {/* Başlıklar */}
+                                <div className="flex gap-2 text-xs text-slate-500 mb-1 px-1">
+                                    <div className="flex-1">Yemek Adı</div>
+                                    <div className="w-24">Geliş (₺)</div>
+                                    <div className="w-24">Kar (₺)</div>
+                                    <div className="w-24">Satış (₺)</div>
+                                    <div className="w-8"></div>
+                                </div>
+
                                 {menuItems.map((item, idx) => (
                                     <div key={idx} className="flex gap-2 mb-2">
                                         <input
                                             type="text"
-                                            placeholder="Yemek adı"
+                                            placeholder="Örn: Tavuk Sote"
                                             className="flex-1 bg-slate-800 border border-slate-700 text-white p-2 rounded-lg"
                                             value={item.name}
-                                            onChange={(e) => {
-                                                const newItems = [...menuItems]
-                                                newItems[idx].name = e.target.value
-                                                setMenuItems(newItems)
-                                            }}
+                                            onChange={(e) => updateItem(idx, 'name', e.target.value)}
                                         />
                                         <input
                                             type="number"
                                             step="0.01"
-                                            placeholder="Fiyat"
-                                            className="w-32 bg-slate-800 border border-slate-700 text-white p-2 rounded-lg"
+                                            placeholder="Geliş"
+                                            className="w-24 bg-slate-800 border border-slate-700 text-white p-2 rounded-lg"
+                                            value={item.buying_price || ''}
+                                            onChange={(e) => updateItem(idx, 'buying_price', e.target.value)}
+                                        />
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="Kar"
+                                            readOnly // Kar otomatik hesaplanıyor
+                                            className="w-24 bg-slate-900 border border-slate-800 text-green-500 font-bold p-2 rounded-lg cursor-not-allowed"
+                                            value={item.profit || 0}
+                                        />
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="Satış"
+                                            className="w-24 bg-slate-800 border border-slate-700 text-white p-2 rounded-lg font-bold"
                                             value={item.price || ''}
-                                            onChange={(e) => {
-                                                const newItems = [...menuItems]
-                                                newItems[idx].price = parseFloat(e.target.value) || 0
-                                                setMenuItems(newItems)
-                                            }}
+                                            onChange={(e) => updateItem(idx, 'price', e.target.value)}
                                         />
                                         {menuItems.length > 1 && (
                                             <button
                                                 onClick={() => setMenuItems(menuItems.filter((_, i) => i !== idx))}
-                                                className="bg-red-600 hover:bg-red-500 text-white px-3 rounded"
+                                                className="bg-red-600 hover:bg-red-500 text-white px-2 rounded w-8"
                                             >
                                                 <X size={16} />
                                             </button>
@@ -287,7 +295,7 @@ export default function EtutMenuPage() {
                                     </div>
                                 ))}
                                 <button
-                                    onClick={() => setMenuItems([...menuItems, { name: '', price: 0 }])}
+                                    onClick={() => setMenuItems([...menuItems, { name: '', buying_price: 0, profit: 0, price: 0 }])}
                                     className="w-full bg-slate-800 hover:bg-slate-700 text-white py-2 rounded-lg text-sm font-bold mt-2"
                                 >
                                     + Yemek Ekle
@@ -314,4 +322,3 @@ export default function EtutMenuPage() {
         </div>
     )
 }
-

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getAdminStats, getRevenueReport } from '@/actions/admin-actions'
+import { getAdminStats, getRevenueReport, getSchoolRevenueStats } from '@/actions/admin-actions'
 import { backupNextBatch } from '@/actions/backup-actions'
 import {
     TrendingUp, TrendingDown, School, AlertTriangle,
@@ -11,6 +11,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { toast } from 'sonner'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,8 +25,10 @@ const latinify = (str: string) => {
 }
 
 export default function AdminDashboard() {
+    const supabase = createClientComponentClient()
     const [stats, setStats] = useState<any>(null)
     const [loading, setLoading] = useState(true)
+    const [isSchoolAdmin, setIsSchoolAdmin] = useState(false)
     const [isReportModalOpen, setIsReportModalOpen] = useState(false)
     const [reportStartDate, setReportStartDate] = useState('')
     const [reportEndDate, setReportEndDate] = useState('')
@@ -33,8 +36,24 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         const loadStats = async () => {
-            const data = await getAdminStats()
-            setStats(data)
+            // 1. Kullanıcı Rolünü Kontrol Et
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return
+
+            // Profil bilgisinden okul id'sini al
+            const { data: profile } = await supabase.from('profiles').select('school_id, role').eq('id', user.id).single()
+
+            if (profile?.school_id) {
+                // OKUL YÖNETİCİSİ / KANTİNCİ
+                setIsSchoolAdmin(true)
+                const data = await getSchoolRevenueStats(profile.school_id)
+                setStats(data)
+            } else {
+                // SİSTEM YÖNETİCİSİ (Admin)
+                setIsSchoolAdmin(false)
+                const data = await getAdminStats()
+                setStats(data)
+            }
             setLoading(false)
         }
         loadStats()
@@ -113,7 +132,7 @@ export default function AdminDashboard() {
 
             // Başlık
             doc.setFontSize(18)
-            doc.text('SkyTech Yonetim Paneli - Gelir Raporu', 14, 22)
+            doc.text(isSchoolAdmin ? 'Okul Gelir Raporu' : 'SkyTech Yonetim Paneli - Gelir Raporu', 14, 22)
 
             // Tarih aralığı
             doc.setFontSize(12)
@@ -264,9 +283,11 @@ export default function AdminDashboard() {
             <div className="flex justify-between items-end border-b border-white/10 pb-6">
                 <div>
                     <h1 className="text-4xl font-bold bg-gradient-to-r from-yellow-400 via-yellow-200 to-yellow-500 bg-clip-text text-transparent">
-                        SkyTech İmparatorluğu
+                        {isSchoolAdmin ? 'Okul Finans Paneli' : 'SkyTech İmparatorluğu'}
                     </h1>
-                    <p className="text-slate-400 mt-2 text-lg">Yönetim Paneli ve Finansal Genel Bakış</p>
+                    <p className="text-slate-400 mt-2 text-lg">
+                        {isSchoolAdmin ? 'Gerçek zamanlı ciro ve kar takibi' : 'Yönetim Paneli ve Finansal Genel Bakış'}
+                    </p>
                 </div>
                 <button
                     onClick={() => setIsReportModalOpen(true)}
@@ -279,7 +300,7 @@ export default function AdminDashboard() {
 
             {/* İSTATİSTİK KARTLARI */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {/* TOPLAM HASILAT */}
+                {/* TOPLAM HASILAT / CİRO */}
                 <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-6 rounded-2xl border border-yellow-500/20 shadow-lg shadow-yellow-900/10 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                         <DollarSign size={100} className="text-yellow-500" />
@@ -288,17 +309,20 @@ export default function AdminDashboard() {
                         <div className="p-3 bg-yellow-500/20 rounded-xl text-yellow-400">
                             <TrendingUp size={24} />
                         </div>
-                        <span className="text-slate-400 font-medium">Toplam Hasılat</span>
+                        <span className="text-slate-400 font-medium">
+                            {isSchoolAdmin ? 'Toplam Ciro' : 'Toplam Hasılat'}
+                        </span>
                     </div>
                     <div className="text-4xl font-bold text-white mb-1">
                         ₺{stats?.totalRevenue?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                     </div>
                     <div className="text-xs text-green-400 flex items-center gap-1">
-                        <ArrowUpRight size={12} /> Tüm Zamanlar Komisyon Toplamı
+                        <ArrowUpRight size={12} />
+                        {isSchoolAdmin ? 'Brüt Satış Geliri' : 'Tüm Zamanlar Komisyon Toplamı'}
                     </div>
                 </div>
 
-                {/* GÜNLÜK GELİR */}
+                {/* GÜNLÜK GELİR / CİRO */}
                 <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-6 rounded-2xl border border-green-500/20 shadow-lg shadow-green-900/10 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                         <TrendingUp size={100} className="text-green-500" />
@@ -307,17 +331,19 @@ export default function AdminDashboard() {
                         <div className="p-3 bg-green-500/20 rounded-xl text-green-400">
                             <TrendingUp size={24} />
                         </div>
-                        <span className="text-slate-400 font-medium">Günlük Gelir</span>
+                        <span className="text-slate-400 font-medium">
+                            {isSchoolAdmin ? 'Günlük Ciro' : 'Günlük Gelir'}
+                        </span>
                     </div>
                     <div className="text-4xl font-bold text-white mb-1">
                         ₺{stats?.dailyRevenue?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                     </div>
                     <div className="text-xs text-green-400 flex items-center gap-1">
-                        Bugünkü Komisyon Toplamı
+                        {isSchoolAdmin ? 'Bugünkü Satışlar' : 'Bugünkü Komisyon Toplamı'}
                     </div>
                 </div>
 
-                {/* AYLIK GELİR */}
+                {/* AYLIK GELİR / CİRO */}
                 <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-6 rounded-2xl border border-indigo-500/20 shadow-lg shadow-indigo-900/10 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                         <TrendingUp size={100} className="text-indigo-500" />
@@ -332,23 +358,28 @@ export default function AdminDashboard() {
                         ₺{stats?.monthlyRevenue?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                     </div>
                     <div className="text-xs text-indigo-400 flex items-center gap-1">
-                        Bu Ayki Komisyon Toplamı
+                        {isSchoolAdmin ? 'Bu Ayki Ciro' : 'Bu Ayki Komisyon Toplamı'}
                     </div>
                 </div>
 
-                {/* AKTİF OKULLAR */}
+                {/* SON KUTU: KAR (OKUL) veya AKTİF OKULLAR (ADMİN) */}
                 <div className="bg-gradient-to-br from-slate-900 to-slate-950 p-6 rounded-2xl border border-blue-500/20 shadow-lg shadow-blue-900/10 relative overflow-hidden">
                     <div className="flex items-center gap-4 mb-4">
                         <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400">
                             <School size={24} />
                         </div>
-                        <span className="text-slate-400 font-medium">Aktif Okullar</span>
+                        <span className="text-slate-400 font-medium">
+                            {isSchoolAdmin ? 'Tahmini Kar' : 'Aktif Okullar'}
+                        </span>
                     </div>
                     <div className="text-4xl font-bold text-white mb-1">
-                        {stats?.activeSchools || 0}
+                        {isSchoolAdmin
+                            ? `₺${stats?.totalProfit?.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}`
+                            : (stats?.activeSchools || 0)
+                        }
                     </div>
                     <div className="text-xs text-blue-400">
-                        Sistemdeki Toplam Okul
+                        {isSchoolAdmin ? 'Maliyetler Düşüldükten Sonra' : 'Sistemdeki Toplam Okul'}
                     </div>
                 </div>
             </div>
@@ -357,10 +388,10 @@ export default function AdminDashboard() {
             <div className="bg-slate-900/50 p-6 rounded-2xl border border-white/5">
                 <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
                     <PieChart className="text-indigo-500" />
-                    Tahsilat Analizi (Son 6 Ay) - Sistem Kredisi Komisyonları
+                    {isSchoolAdmin ? 'Ciro Analizi (Son 6 Ay)' : 'Tahsilat Analizi (Son 6 Ay) - Sistem Kredisi Komisyonları'}
                 </h3>
                 <p className="text-sm text-slate-400 mb-4">
-                    Her ay kullanıcı panellerinde harcanan sistem kredilerinden düşen komisyonların aylık toplamı
+                    {isSchoolAdmin ? 'Aylık toplam satış grafiği' : 'Her ay kullanıcı panellerinde harcanan sistem kredilerinden düşen komisyonların aylık toplamı'}
                 </p>
                 <div className="h-80 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -371,7 +402,7 @@ export default function AdminDashboard() {
                             <Tooltip
                                 contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff' }}
                                 itemStyle={{ color: '#fbbf24' }}
-                                formatter={(value: any) => [`₺${value.toFixed(2)}`, 'Komisyon']}
+                                formatter={(value: any) => [`₺${value.toFixed(2)}`, isSchoolAdmin ? 'Ciro' : 'Komisyon']}
                             />
                             <Bar dataKey="total" fill="#fbbf24" radius={[4, 4, 0, 0]} />
                         </BarChart>

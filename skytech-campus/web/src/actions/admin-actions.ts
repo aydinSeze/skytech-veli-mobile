@@ -58,7 +58,7 @@ export async function getCommissionRate() {
             .select('setting_value')
             .eq('setting_key', 'commission_rate')
             .single()
-        
+
         return data ? parseFloat(data.setting_value) : 1.0 // Varsayılan %1.0
     } catch (error) {
         console.error('Komisyon oranı alınırken hata:', error)
@@ -118,7 +118,7 @@ export async function getAdminStats() {
             .from('transactions')
             .select('id, created_at')
             .in('transaction_type', ['sale', 'purchase'])
-        
+
         const totalSalesCount = allSales?.length || 0
         const totalRevenue = totalSalesCount * commissionRate
 
@@ -126,26 +126,26 @@ export async function getAdminStats() {
         const today = new Date()
         today.setHours(0, 0, 0, 0)
         const todayStr = today.toISOString()
-        
+
         const { data: todaySales } = await supabase
             .from('transactions')
             .select('id')
             .in('transaction_type', ['sale', 'purchase'])
             .gte('created_at', todayStr)
-        
+
         const todaySalesCount = todaySales?.length || 0
         const dailyRevenue = todaySalesCount * commissionRate
 
         // 3. Aylık Kazanç (Bu ay yapılan satışların komisyon toplamı)
         const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
         const monthStartStr = monthStart.toISOString()
-        
+
         const { data: monthSales } = await supabase
             .from('transactions')
             .select('id')
             .in('transaction_type', ['sale', 'purchase'])
             .gte('created_at', monthStartStr)
-        
+
         const monthSalesCount = monthSales?.length || 0
         const monthlyRevenue = monthSalesCount * commissionRate
 
@@ -173,13 +173,13 @@ export async function getAdminStats() {
         // Son 6 Aylık Tahsilat Grafiği (Komisyon bazlı - Her ayın başında yenilenir)
         const chartData = []
         const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
-        
+
         // Son 6 ayı hesapla (bugünden geriye doğru)
         for (let i = 5; i >= 0; i--) {
             const targetMonth = new Date(today.getFullYear(), today.getMonth() - i, 1)
             const monthStart = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1, 0, 0, 0, 0)
             const monthEnd = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0, 23, 59, 59, 999)
-            
+
             // O ay içindeki tüm satışları say (komisyon hesaplamak için)
             const { data: monthSalesData } = await supabase
                 .from('transactions')
@@ -187,10 +187,10 @@ export async function getAdminStats() {
                 .in('transaction_type', ['sale', 'purchase'])
                 .gte('created_at', monthStart.toISOString())
                 .lte('created_at', monthEnd.toISOString())
-            
+
             const monthSalesCount = monthSalesData?.length || 0
             const monthCommission = monthSalesCount * commissionRate
-            
+
             chartData.push({
                 name: monthNames[targetMonth.getMonth()] + ' ' + targetMonth.getFullYear(),
                 total: monthCommission
@@ -291,6 +291,105 @@ export async function getRevenueReport(startDate: string, endDate: string) {
 
     } catch (error) {
         console.error('Gelir raporu hatası:', error)
+        return null
+    }
+}
+
+// 5. Okul Bazlı Gelir İstatistikleri (Kantinci Paneli İçin)
+export async function getSchoolRevenueStats(schoolId: string) {
+    const supabase = await createClient()
+
+    try {
+        // 1. Toplam Ciro (Eksi bakiyeli purchase işlemleri pozitife çevrilir)
+        const { data: allSales, error: salesError } = await supabase
+            .from('transactions')
+            .select('amount, created_at, items_json') // items_json kar hesabı için lazım olabilir
+            .eq('school_id', schoolId)
+            // Sadece harcama işlemlerini al (bakiye yükleme değil)
+            // Genelde purchase işlemi eksi bakiyedir. 
+            // Ancak transaction_type='purchase' kontrolü daha güvenli.
+            .eq('transaction_type', 'purchase')
+
+        if (salesError) throw salesError
+
+        // Ciro Hesabı (Eksi değerleri mutlak değere çevirip topla)
+        const totalRevenue = allSales?.reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0
+
+        // 2. Günlük Ciro
+        const today = new Date()
+        const todayStr = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString()
+
+        const dailySales = allSales?.filter(t => t.created_at >= todayStr) || []
+        const dailyRevenue = dailySales.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+
+        // 3. Aylık Ciro
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString()
+        const monthlySales = allSales?.filter(t => t.created_at >= monthStart) || []
+        const monthlyRevenue = monthlySales.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+
+        // 4. Grafik Verisi (Son 6 Ay - Ciro Bazlı)
+        const chartData = []
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
+
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
+            const mStart = d.toISOString()
+            const mEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString()
+
+            // O ayın satışları
+            const monthSlice = allSales?.filter(t => t.created_at >= mStart && t.created_at <= mEnd) || []
+            const monthTotal = monthSlice.reduce((sum, t) => sum + Math.abs(t.amount), 0)
+
+            chartData.push({
+                name: monthNames[d.getMonth()],
+                total: monthTotal
+            })
+        }
+
+        // 5. Kar / Zarar Analizi (Opsiyonel - items_json içinde buying_price varsa)
+        // Şimdilik sadece ciro dönüyoruz, ileride `items_json` parse edilip kar hesaplanabilir.
+        // items_json yapısı: [{ buying_price: 10, selling_price: 15, quantity: 1 }, ...]
+
+        let totalProfit = 0
+        let dailyProfit = 0
+
+        // Basit Kar Hesabı (Eğer veri varsa)
+        allSales?.forEach(sale => {
+            const amount = Math.abs(sale.amount)
+            let cost = 0
+
+            if (sale.items_json && Array.isArray(sale.items_json)) {
+                sale.items_json.forEach((item: any) => {
+                    // Alış fiyatı varsa maliyeti topla
+                    if (item.buying_price) {
+                        cost += Number(item.buying_price) * (Number(item.quantity) || 1)
+                    }
+                })
+            }
+
+            // Eğer items_json boşsa veya maliyet çıkmadıysa, kar hesabı eksik kalır.
+            // Bu durumda sadece hesaplanabilenleri ekleriz veya 0 sayarız.
+            if (cost > 0) {
+                totalProfit += (amount - cost)
+
+                // Günlük kar
+                if (sale.created_at >= todayStr) {
+                    dailyProfit += (amount - cost)
+                }
+            }
+        })
+
+        return {
+            totalRevenue,
+            dailyRevenue,
+            monthlyRevenue,
+            totalProfit, // Tahmini (veriler tam ise)
+            dailyProfit,
+            chartData
+        }
+
+    } catch (error) {
+        console.error('Okul istatistikleri hatası:', error)
         return null
     }
 }

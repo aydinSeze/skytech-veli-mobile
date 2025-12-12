@@ -15,9 +15,9 @@ export default function ProductsPage() {
         canteen_id: '',
         name: '',
         barcode: '',
-        buying_price: 0,
-        selling_price: 0,
-        stock_quantity: 0
+        buying_price: '' as any, // 0 YERİNE BOŞ STRING
+        selling_price: '' as any, // 0 YERİNE BOŞ STRING
+        stock_quantity: '' as any  // 0 YERİNE BOŞ STRING
     })
 
     // --- BENZERSİZ BARKOD ÜRETİCİ ---
@@ -69,7 +69,7 @@ export default function ProductsPage() {
     // Formu Sıfırla (Yeni Barkodla)
     const resetForm = async () => {
         const newCode = await generateUniqueBarcode()
-        setForm({ canteen_id: '', name: '', barcode: newCode, buying_price: 0, selling_price: 0, stock_quantity: 0 })
+        setForm({ canteen_id: '', name: '', barcode: newCode, buying_price: '', selling_price: '', stock_quantity: '' })
         setEditingId(null)
     }
 
@@ -102,9 +102,9 @@ export default function ProductsPage() {
             canteen_id: form.canteen_id,
             name: form.name,
             barcode: form.barcode,
-            buying_price: form.buying_price,
-            selling_price: form.selling_price,
-            stock_quantity: form.stock_quantity
+            buying_price: parseFloat(form.buying_price) || 0,
+            selling_price: parseFloat(form.selling_price) || 0,
+            stock_quantity: parseInt(form.stock_quantity) || 0
         }
 
         let error
@@ -174,17 +174,20 @@ export default function ProductsPage() {
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Alış Fiyatı</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={form.buying_price} onChange={e => setForm({ ...form, buying_price: parseFloat(e.target.value) })} />
+                        value={form.buying_price} onChange={e => setForm({ ...form, buying_price: e.target.value })}
+                        placeholder="0.00" />
                 </div>
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Satış Fiyatı</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={form.selling_price} onChange={e => setForm({ ...form, selling_price: parseFloat(e.target.value) })} />
+                        value={form.selling_price} onChange={e => setForm({ ...form, selling_price: e.target.value })}
+                        placeholder="0.00" />
                 </div>
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Stok Adedi</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={form.stock_quantity} onChange={e => setForm({ ...form, stock_quantity: parseInt(e.target.value) })} />
+                        value={form.stock_quantity} onChange={e => setForm({ ...form, stock_quantity: e.target.value })}
+                        placeholder="0" />
                 </div>
 
                 <div className="flex gap-2 md:col-span-3 lg:col-span-1">
