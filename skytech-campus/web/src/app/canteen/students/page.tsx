@@ -1219,25 +1219,26 @@ export default function StudentsPage() {
             {/* PARA YÜKLEME POPUP */}
             {depositModal.open && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-                    <div className="bg-slate-800 p-6 rounded-xl w-96 border border-slate-600 shadow-2xl">
+                    <div className="bg-slate-800 p-6 rounded-xl w-96 border border-slate-600 shadow-2xl relative overflow-hidden">
+                        {isDepositSubmitting && (
+                            <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center text-center p-4 cursor-wait">
+                                <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent mb-4"></div>
+                                <h3 className="text-xl font-bold text-white mb-2">Lütfen Bekleyiniz...</h3>
+                                <p className="text-slate-400 text-sm">İşlem sunucuda tamamlanıyor.</p>
+                                <p className="text-slate-500 text-xs mt-2">Bu işlem birkaç saniye sürebilir.</p>
+                            </div>
+                        )}
                         <h2 className="text-xl font-bold text-white mb-4">Bakiye Yükle</h2>
                         <div className="mb-4">
                             <div className="text-slate-400 text-sm">Öğrenci</div>
                             <div className="text-white font-bold text-lg">{depositModal.student?.full_name}</div>
                         </div>
                         <input type="number" className="w-full bg-slate-900 text-white text-2xl p-3 rounded border border-green-500 mb-4 text-center"
-                            placeholder="0.00" autoFocus value={depositAmount} onChange={e => setDepositAmount(e.target.value)} />
+                            placeholder="0.00" autoFocus value={depositAmount} onChange={e => setDepositAmount(e.target.value)} disabled={isDepositSubmitting} />
                         <div className="flex gap-3">
                             <button onClick={() => setDepositModal({ open: false, student: null })} disabled={isDepositSubmitting} className="flex-1 bg-slate-700 text-white py-3 rounded-lg disabled:opacity-50">İptal</button>
                             <button onClick={handleDeposit} disabled={isDepositSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2">
-                                {isDepositSubmitting ? (
-                                    <>
-                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                                        <span>Yükleniyor...</span>
-                                    </>
-                                ) : (
-                                    'Onayla'
-                                )}
+                                'Onayla'
                             </button>
                         </div>
                     </div>
