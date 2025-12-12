@@ -51,6 +51,9 @@ export default function StudentsPage() {
     const [wizardInput, setWizardInput] = useState('')
     const wizardInputRef = useRef<HTMLInputElement>(null)
 
+    // Double submission lock
+    const isSubmittingRef = useRef(false)
+
     // Öğrenci Formu
     const [form, setForm] = useState({
         school_id: '',
@@ -572,13 +575,18 @@ export default function StudentsPage() {
 
     // Bakiye Yükle
     const handleDeposit = async () => {
-        if (!depositModal.student || !depositAmount || isDepositSubmitting) return
+        // Synchronous check!
+        if (isSubmittingRef.current || !depositModal.student || !depositAmount) return
 
         try {
+            isSubmittingRef.current = true
             setIsDepositSubmitting(true)
+
             const amount = parseFloat(depositAmount)
             if (isNaN(amount) || amount <= 0) {
                 alert('Geçerli bir tutar giriniz.')
+                isSubmittingRef.current = false
+                setIsDepositSubmitting(false)
                 return
             }
 
@@ -595,6 +603,7 @@ export default function StudentsPage() {
         } catch (error: any) {
             alert('Beklenmedik Hata: ' + error.message)
         } finally {
+            isSubmittingRef.current = false
             setIsDepositSubmitting(false)
         }
     }

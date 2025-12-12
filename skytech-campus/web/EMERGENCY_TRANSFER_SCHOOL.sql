@@ -17,46 +17,64 @@ BEGIN
     UPDATE public.students 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Öğrenciler: % adet taşındı.', row_count;
 
     -- 2. İŞLEMLER (Harcamalar)
     UPDATE public.transactions 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'İşlemler (Muhasebe): % adet taşındı.', row_count;
 
     -- 3. SİPARİŞLER
     UPDATE public.orders 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Siparişler: % adet taşındı.', row_count;
 
     -- 4. ÜRÜNLER
     UPDATE public.products 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Ürünler: % adet taşındı.', row_count;
 
     -- 5. PERSONEL
     UPDATE public.school_personnel 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Personel: % adet taşındı.', row_count;
 
     -- 6. ETÜT MENÜSÜ
     UPDATE public.etut_menu 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+     GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Etüt Menüleri: % adet taşındı.', row_count;
 
     -- 7. KANTİNLER
     UPDATE public.canteens 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+     GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Kantin Hesapları: % adet taşındı.', row_count;
 
     -- 8. TEDARİKÇİLER
     UPDATE public.suppliers 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+     GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Tedarikçiler: % adet taşındı.', row_count;
 
     -- 9. GİDERLER
     UPDATE public.expenses 
     SET school_id = new_school_id 
     WHERE school_id = old_school_id;
+     GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE NOTICE 'Giderler: % adet taşındı.', row_count;
 
-    RAISE NOTICE 'Transfer başarıyla tamamlandı!';
+    RAISE NOTICE '✅ Transfer başarıyla tamamlandı!';
 END $$;
