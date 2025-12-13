@@ -1,8 +1,9 @@
 'use client'
 
 import { createClient } from '@/utils/supabase/client'
-import { useEffect, useState, useCallback } from 'react'
-import { Dices } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Dices, Download, Upload, Search, FileSpreadsheet } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,13 @@ export default function ProductsPage() {
     const [editingId, setEditingId] = useState<string | null>(null)
     const [currentTime, setCurrentTime] = useState<string>('')
     const [userSchoolId, setUserSchoolId] = useState<string | null>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // SAYFALAMA VE ARAMA
+    const PAGE_SIZE = 5
+    const [page, setPage] = useState(0)
+    const [totalCount, setTotalCount] = useState(0)
+    const [searchTerm, setSearchTerm] = useState('')
 
     const [form, setForm] = useState({
         name: '',
@@ -64,51 +72,57 @@ export default function ProductsPage() {
     }, [])
 
     // Verileri Çek
-    const fetchData = async () => {
+    const fetchData = async (targetPage = 0, search = '') => {
         try {
             setLoading(true)
 
-            // 1. Kullanıcının Okul ID'sini Çek (Yönetici için URL parametresinden)
+            // 1. Kullanıcının Okul ID'sini Çek
             const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
             const urlSchoolId = urlParams.get('schoolId')
             let targetSchoolId: string | null = null
 
             if (urlSchoolId) {
-                // Yönetici modu - URL'den schoolId al
                 targetSchoolId = urlSchoolId
                 setUserSchoolId(urlSchoolId)
             } else {
-                // Normal kullanıcı - Profile'dan al
                 const { data: { user } } = await supabase.auth.getUser()
                 if (!user) return
 
                 const { data: profile } = await supabase.from('profiles').select('school_id').eq('id', user.id).single()
                 if (!profile?.school_id) {
                     alert('Okul bilgisi bulunamadı! Lütfen sayfayı yenileyin.')
-                    setLoading(false)
                     return
                 }
                 targetSchoolId = profile.school_id
                 setUserSchoolId(profile.school_id)
             }
 
-            if (!targetSchoolId) {
-                setLoading(false)
-                return
-            }
+            if (!targetSchoolId) return
 
-            // 2. Tedarikçileri Çek
+            // 2. Tedarikçileri Çek (Sadece ilk yüklemede veya gerekirse)
             const { data: supplierData } = await supabase.from('suppliers').select('*').eq('school_id', targetSchoolId)
             setSuppliers(supplierData || [])
 
-            // 3. Sadece bu okula ait ürünleri çek (Pagination: 1000 ürün limit)
-            const { data: productData } = await supabase
+            // 3. Ürünleri Çek (Pagination & Search)
+            let query = supabase
                 .from('products')
-                .select('id, name, barcode, buying_price, selling_price, stock_quantity, supplier_id, company_phone, created_at, suppliers(name)')
+                .select('id, name, barcode, buying_price, selling_price, stock_quantity, supplier_id, company_phone, created_at, suppliers(name)', { count: 'exact' })
                 .eq('school_id', targetSchoolId)
                 .order('created_at', { ascending: false })
-                .limit(1000) // PERFORMANS: Maksimum 1000 ürün
+
+            if (search.trim()) {
+                query = query.ilike('name', `%${search.trim()}%`)
+            }
+
+            const from = targetPage * PAGE_SIZE
+            const to = from + PAGE_SIZE - 1
+            query = query.range(from, to)
+
+            const { data: productData, count } = await query
+
             setProducts(productData || [])
+            setTotalCount(count || 0)
+
         } catch (error) {
             console.error(error)
         } finally {
@@ -117,6 +131,90 @@ export default function ProductsPage() {
     }
 
     useEffect(() => { fetchData() }, [])
+
+    // Excel Şablon İndir
+    const handleDownloadTemplate = () => {
+        const headers = ['Ürün Adı', 'Alış Fiyatı', 'Satış Fiyatı', 'Stok Adedi']
+        const exampleData = [
+            ['TOST', '15', '30', '100'],
+            ['AYRAN', '5', '10', '50']
+        ]
+        const data = [headers, ...exampleData]
+        const ws = XLSX.utils.aoa_to_sheet(data)
+        ws['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 15 }]
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, 'Urun Listesi')
+        XLSX.writeFile(wb, 'urun_yukleme_sablonu.xlsx')
+    }
+
+    // Excel Yükle
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file || !userSchoolId) return
+
+        const reader = new FileReader()
+        reader.onload = async (evt) => {
+            try {
+                const bstr = evt.target?.result
+                const wb = XLSX.read(bstr, { type: 'binary' })
+                const wsname = wb.SheetNames[0]
+                const ws = wb.Sheets[wsname]
+                const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]
+
+                if (data.length < 2) {
+                    alert('Excel boş veya hatalı format.')
+                    return
+                }
+
+                const newProducts = []
+                let errors = []
+
+                for (let i = 1; i < data.length; i++) {
+                    const row = data[i]
+                    if (!row || row.length === 0) continue
+
+                    const name = (row[0] || '').toString().trim()
+                    const buying_price = parseFloat(row[1]) || 0
+                    const selling_price = parseFloat(row[2]) || 0
+                    const stock_quantity = parseInt(row[3]) || 0
+
+                    if (!name) {
+                        errors.push(`Satır ${i + 1}: Ürün adı zorunludur.`)
+                        continue
+                    }
+
+                    // Otomatik Barkod
+                    let barcode = Math.floor(10000000 + Math.random() * 90000000).toString()
+
+                    newProducts.push({
+                        school_id: userSchoolId,
+                        name: name.toUpperCase(),
+                        buying_price,
+                        selling_price,
+                        stock_quantity,
+                        barcode: barcode,
+                        canteen_id: null
+                    })
+                }
+
+                if (newProducts.length > 0) {
+                    const { error } = await supabase.from('products').insert(newProducts)
+                    if (error) throw error
+                    alert(`✅ ${newProducts.length} ürün başarıyla eklendi!`)
+                    fetchData()
+                }
+
+                if (errors.length > 0) {
+                    alert('Bazı satırlar eklenemedi:\n' + errors.join('\n'))
+                }
+
+            } catch (error: any) {
+                alert('Yükleme hatası: ' + error.message)
+            }
+        }
+        reader.readAsBinaryString(file)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+    }
 
     // Formu Sıfırla (Yeni Barkodla)
     const resetForm = async () => {
@@ -152,13 +250,13 @@ export default function ProductsPage() {
     const handleDelete = async (id: string) => {
         if (!confirm('Bu ürünü silmek istediğinize emin misiniz?')) return
         const { error } = await supabase.from('products').delete().eq('id', id)
-        if (!error) fetchData()
+        if (!error) fetchData(page, searchTerm)
     }
 
     // Kaydet / Güncelle
     const handleSave = async () => {
         const name = form.name?.trim() || ''
-        
+
         if (!name) {
             alert('Lütfen ürün adını girin!')
             return
@@ -194,7 +292,7 @@ export default function ProductsPage() {
         else {
             alert(editingId ? 'Ürün Güncellendi!' : 'Ürün Eklendi!')
             await resetForm()
-            fetchData()
+            fetchData(page, searchTerm)
         }
     }
 
@@ -207,19 +305,73 @@ export default function ProductsPage() {
                 </div>
             </div>
 
+            {/* EXCEL İŞLEMLERİ */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div
+                    onClick={handleDownloadTemplate}
+                    className="cursor-pointer bg-slate-800 hover:bg-slate-700/80 p-6 rounded-xl border border-slate-700 transition-all group flex items-center justify-between"
+                >
+                    <div>
+                        <h3 className="text-lg font-bold text-white mb-1 group-hover:text-green-400 transition-colors">Excel Şablon İndir</h3>
+                        <p className="text-sm text-slate-400">Ürünlerinizi toplu eklemek için şablonu indirin.</p>
+                    </div>
+                    <div className="bg-slate-900 p-3 rounded-full text-green-500 group-hover:scale-110 transition-transform">
+                        <Download size={24} />
+                    </div>
+                </div>
+
+                <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="cursor-pointer bg-slate-800 hover:bg-slate-700/80 p-6 rounded-xl border border-slate-700 transition-all group flex items-center justify-between"
+                >
+                    <div>
+                        <h3 className="text-lg font-bold text-white mb-1 group-hover:text-blue-400 transition-colors">Excel Şablon Yükle</h3>
+                        <p className="text-sm text-slate-400">Doldurduğunuz şablonu sisteme yükleyin.</p>
+                    </div>
+                    <div className="bg-slate-900 p-3 rounded-full text-blue-500 group-hover:scale-110 transition-transform">
+                        <Upload size={24} />
+                    </div>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        accept=".xlsx, .xls"
+                    />
+                </div>
+            </div>
+
+            {/* ARAMA ALANI */}
+            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white pl-10 pr-4 py-3 rounded-lg border border-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        placeholder="Ürün Ara (İsim)..."
+                        value={searchTerm}
+                        onChange={e => {
+                            setSearchTerm(e.target.value)
+                            if (e.target.value === '') fetchData(0, '')
+                        }}
+                        onKeyDown={e => e.key === 'Enter' && fetchData(0, searchTerm)}
+                    />
+                </div>
+            </div>
+
             {/* FORM ALANI */}
             <div className={`p-4 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4 items-end border transition-all
         ${editingId ? 'bg-yellow-900/20 border-yellow-600' : 'bg-slate-800 border-slate-800'}`}>
 
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Ürün Adı</label>
-                    <input 
-                        type="text" 
-                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase" 
+                    <input
+                        type="text"
+                        className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700 uppercase"
                         placeholder="Örn: TOST"
                         style={{ textTransform: 'uppercase' }}
-                        value={form.name} 
-                        onChange={e => setForm({ ...form, name: e.target.value.toUpperCase() })} 
+                        value={form.name}
+                        onChange={e => setForm({ ...form, name: e.target.value.toUpperCase() })}
                     />
                 </div>
 
@@ -250,7 +402,7 @@ export default function ProductsPage() {
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Alış Fiyatı</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={isNaN(form.buying_price) ? '' : form.buying_price} 
+                        value={isNaN(form.buying_price) ? '' : form.buying_price}
                         onChange={e => {
                             const val = parseFloat(e.target.value);
                             setForm({ ...form, buying_price: isNaN(val) ? 0 : val });
@@ -259,7 +411,7 @@ export default function ProductsPage() {
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Satış Fiyatı</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={isNaN(form.selling_price) ? '' : form.selling_price} 
+                        value={isNaN(form.selling_price) ? '' : form.selling_price}
                         onChange={e => {
                             const val = parseFloat(e.target.value);
                             setForm({ ...form, selling_price: isNaN(val) ? 0 : val });
@@ -268,7 +420,7 @@ export default function ProductsPage() {
                 <div>
                     <label className="block text-sm text-slate-400 mb-1">Stok Adedi</label>
                     <input type="number" className="w-full bg-slate-900 text-white p-2 rounded border border-slate-700"
-                        value={isNaN(form.stock_quantity) ? '' : form.stock_quantity} 
+                        value={isNaN(form.stock_quantity) ? '' : form.stock_quantity}
                         onChange={e => {
                             const val = parseInt(e.target.value);
                             setForm({ ...form, stock_quantity: isNaN(val) ? 0 : val });
@@ -344,6 +496,38 @@ export default function ProductsPage() {
                         ))}
                     </tbody>
                 </table>
+
+                {/* SAYFALAMA KONTROLLERİ */}
+                <div className="bg-slate-950 p-4 border-t border-slate-800 flex justify-between items-center text-sm">
+                    <div className="text-slate-400">
+                        Toplam <span className="text-white font-bold">{totalCount}</span> ürün,
+                        Şu an <span className="text-white font-bold">{page + 1}</span>. sayfadasınız
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            disabled={page === 0 || loading}
+                            onClick={() => {
+                                const newPage = page - 1
+                                setPage(newPage)
+                                fetchData(newPage, searchTerm)
+                            }}
+                            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            &larr; Önceki
+                        </button>
+                        <button
+                            disabled={(page + 1) * PAGE_SIZE >= totalCount || loading}
+                            onClick={() => {
+                                const newPage = page + 1
+                                setPage(newPage)
+                                fetchData(newPage, searchTerm)
+                            }}
+                            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Sonraki &rarr;
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     )
