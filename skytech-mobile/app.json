@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#0B0F19"
     },
     "ios": {
       "supportsTablet": true,
@@ -18,8 +18,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#0f172a"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0F19"
       },
       "package": "com.aydinsezerr.skytechmobile"
     },
@@ -29,8 +29,8 @@
       "shortName": "SkyTech",
       "lang": "tr",
       "scope": "/",
-      "themeColor": "#0f172a",
-      "backgroundColor": "#0f172a",
+      "themeColor": "#0B0F19",
+      "backgroundColor": "#0B0F19",
       "display": "standalone",
       "orientation": "portrait",
       "startUrl": "/",
