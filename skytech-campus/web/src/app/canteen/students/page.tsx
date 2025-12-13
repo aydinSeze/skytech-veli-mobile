@@ -5,8 +5,8 @@ import { useEffect, useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { Clock, FileText, X, Zap, CreditCard, Pencil, CheckCircle, ScanBarcode } from 'lucide-react'
-import { addStudentBalance } from '@/actions/student-actions'
+import { Clock, FileText, X, Zap, CreditCard, Pencil, CheckCircle, ScanBarcode, Trash2, Lock } from 'lucide-react'
+import { addStudentBalance, bulkDeleteStudents } from '@/actions/student-actions'
 
 // ÖNBELLEK İPTALİ (Her girişte taze veri çeksin)
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,7 @@ export default function StudentsPage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     // SAYFALAMA VE ARAMA AYARLARI
-    const PAGE_SIZE = 20
+    const PAGE_SIZE = 5
     const [page, setPage] = useState(0)
     const [totalCount, setTotalCount] = useState(0)
     const [isSearching, setIsSearching] = useState(false)
@@ -50,6 +50,10 @@ export default function StudentsPage() {
     const [wizardModal, setWizardModal] = useState<{ open: boolean, currentIndex: number, students: any[] }>({ open: false, currentIndex: 0, students: [] })
     const [wizardInput, setWizardInput] = useState('')
     const wizardInputRef = useRef<HTMLInputElement>(null)
+
+    // Toplu Silme Modalı
+    const [bulkDeleteModal, setBulkDeleteModal] = useState<{ open: boolean, pin: string }>({ open: false, pin: '' })
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false)
 
     // Double submission lock
     const isSubmittingRef = useRef(false)
@@ -364,8 +368,8 @@ export default function StudentsPage() {
             return
         }
 
-        if (!fullName || !classBranch) {
-            alert('Lütfen İsim ve Şube bilgilerini girin!')
+        if (!fullName) {
+            alert('Lütfen İsim Soyad bilgisini girin!')
             return
         }
 
@@ -1098,6 +1102,14 @@ export default function StudentsPage() {
                     <FileText size={20} />
                     Toplu PDF İndir
                 </button>
+                <button
+                    onClick={() => setBulkDeleteModal({ open: true, pin: '' })}
+                    className="bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800 hover:border-red-500 px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-all"
+                    title="Tüm öğrencileri toplu sil (Şifreli)"
+                >
+                    <Trash2 size={20} />
+                    Toplu Sil
+                </button>
             </div>
 
             {/* LİSTE */}
@@ -1444,6 +1456,69 @@ export default function StudentsPage() {
                                 <FileText size={18} />
                                 PDF İndir
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* TOPLU SİLME MODALI */}
+            {bulkDeleteModal.open && (
+                <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+                    <div className="bg-red-900/20 backdrop-blur-sm p-8 rounded-2xl w-full max-w-md border border-red-500/50 shadow-2xl relative">
+                        <div className="text-center mb-6">
+                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-500/20 text-red-500 mb-4 animate-pulse">
+                                <Lock size={32} />
+                            </div>
+                            <h2 className="text-2xl font-bold text-white mb-2">Güvenli Silme İşlemi</h2>
+                            <p className="text-red-300 text-sm">
+                                Dikkat! Bu işlem okuldaki <b>TÜM ÖĞRENCİLERİ</b> kalıcı olarak silecektir. Bu işlem geri alınamaz.
+                            </p>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm text-red-200 mb-1">Güvenlik Şifresi (Dashboard PIN)</label>
+                                <input
+                                    type="password"
+                                    className="w-full bg-black/50 text-white text-center text-2xl p-3 rounded-lg border border-red-500/30 focus:border-red-500 focus:ring-1 focus:ring-red-500 tracking-[0.5em]"
+                                    placeholder="PIN"
+                                    maxLength={6}
+                                    value={bulkDeleteModal.pin}
+                                    onChange={e => setBulkDeleteModal(prev => ({ ...prev, pin: e.target.value }))}
+                                />
+                            </div>
+
+                            <div className="flex gap-3 mt-6">
+                                <button
+                                    onClick={() => setBulkDeleteModal({ open: false, pin: '' })}
+                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg font-bold"
+                                    disabled={isBulkDeleting}
+                                >
+                                    İptal
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        if (!bulkDeleteModal.pin) return alert('Lütfen PIN giriniz.')
+                                        if (!confirm('SON UYARI: Tüm öğrenciler silinecek. Emin misiniz?')) return
+
+                                        setIsBulkDeleting(true)
+                                        const result = await bulkDeleteStudents(userSchoolId || form.school_id, bulkDeleteModal.pin)
+                                        setIsBulkDeleting(false)
+
+                                        if (result.success) {
+                                            alert(result.message)
+                                            setBulkDeleteModal({ open: false, pin: '' })
+                                            fetchData()
+                                        } else {
+                                            alert('HATA: ' + result.error)
+                                        }
+                                    }}
+                                    className="flex-1 bg-red-600 hover:bg-red-500 text-white py-3 rounded-lg font-bold shadow-lg shadow-red-900/30"
+                                    disabled={isBulkDeleting}
+                                >
+                                    {isBulkDeleting ? 'Siliniyor...' : 'TÜMÜNÜ SİL'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -39,7 +39,7 @@ export async function addStudentBalance(studentId: string, amount: number) {
         // 4. İşlem Kaydı Oluştur (bakiye bilgileri ile)
         const previousBalance = student.wallet_balance || 0;
         const finalNewBalance = newBalance;
-        
+
         const { error: transactionError } = await supabase.from('transactions').insert({
             school_id: student.school_id,
             student_id: student.id,
@@ -162,4 +162,46 @@ export async function updateStudent(formData: FormData) {
 
     revalidatePath('/canteen/students')
     return { success: true }
+}
+
+export async function bulkDeleteStudents(schoolId: string, privacyPin: string) {
+    const supabase = await createClient()
+
+    try {
+        // 1. PIN Kontrolü
+        const { data: school, error: schoolError } = await supabase
+            .from('schools')
+            .select('privacy_pin')
+            .eq('id', schoolId)
+            .single()
+
+        if (schoolError || !school) {
+            return { success: false, error: 'Okul bilgisi doğrulanamadı.' }
+        }
+
+        // String karşılaştırması (boşlukları temizle)
+        if (String(school.privacy_pin).trim() !== String(privacyPin).trim()) {
+            return { success: false, error: 'Geçersiz Güvenlik Şifresi (PIN)! Lütfen Dashboard özet ekranındaki şifreyi girin.' }
+        }
+
+        // 2. Silme İşlemi (Okuldaki tüm öğrenciler)
+        const { error: deleteError } = await supabase
+            .from('students')
+            .delete()
+            .eq('school_id', schoolId)
+
+        if (deleteError) {
+            // Foreign Key kısıtlaması olabilir (Örn: Transactions tablosu)
+            if (deleteError.message.includes('violates foreign key constraint')) {
+                return { success: false, error: 'Öğrencilere ait geçmiş işlemler (Harcamalar/Siparişler) var. Önce geçmiş verilerin temizlenmesi gerekir.' }
+            }
+            return { success: false, error: 'Silme işlemi başarısız: ' + deleteError.message }
+        }
+
+        revalidatePath('/canteen/students')
+        return { success: true, message: 'Tüm öğrenci kayıtları başarıyla silindi.' }
+
+    } catch (error: any) {
+        return { success: false, error: 'Beklenmedik bir hata oluştu: ' + error.message }
+    }
 }
